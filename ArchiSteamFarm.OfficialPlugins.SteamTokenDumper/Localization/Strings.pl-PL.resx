@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -71,7 +69,7 @@
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin")</comment>
 	</data>
 	<data name="PluginInitializedAndEnabled" xml:space="preserve">
-		<value>{0} został pomyślnie zainicjowany, dziękujemy z góry za pomoc. Pierwsze zgłoszenie nastąpi za około {1} od teraz.</value>
+		<value>{0} został pomyślnie zainicjowany, dziękujemy z góry za pomoc. Pierwsze zgłoszenie nastąpi za około {1}.</value>
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin"), {1} will be replaced by translated TimeSpan string (such as "53 minutes")</comment>
 	</data>
 	<data name="FileCouldNotBeLoadedFreshInit" xml:space="preserve">
@@ -110,8 +108,8 @@
 		<comment>{0} will be replaced by the number (count this batch) of app infos retrieved</comment>
 	</data>
 	<data name="BotFinishedRetrievingDepotKeys" xml:space="preserve">
-		<value>Pomyślnie pobrano {0} z {1} kluczy magazynu.</value>
-		<comment>{0} will be replaced by the number (count this batch) of depot keys that were successfully retrieved, {1} will be replaced by the number (count this batch) of depot keys that were supposed to be retrieved</comment>
+		<value>Zakończono {0} z {1} żądań klucza magazynu.</value>
+		<comment>{0} will be replaced by the number (count this batch) of depot key requests that were successfully answered, {1} will be replaced by the number (count this batch) of depot key requests that were supposed to be sent</comment>
 	</data>
 	<data name="BotFinishedRetrievingTotalDepots" xml:space="preserve">
 		<value>Zakończono pobieranie wszystkich kluczy magazynu dla {0} aplikacji.</value>

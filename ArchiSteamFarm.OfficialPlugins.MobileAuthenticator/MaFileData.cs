@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,51 +22,80 @@
 // limitations under the License.
 
 using System;
-using Newtonsoft.Json;
+using System.Text.Json.Serialization;
+using SteamKit2;
 using SteamKit2.Internal;
 
 namespace ArchiSteamFarm.OfficialPlugins.MobileAuthenticator;
 
 internal sealed class MaFileData {
-	[JsonProperty("account_name", Required = Required.Always)]
-	internal readonly string AccountName;
+	[JsonInclude]
+	[JsonPropertyName("account_name")]
+	[JsonRequired]
+	internal string AccountName { get; private init; }
 
-	[JsonProperty("device_id", Required = Required.Always)]
-	internal readonly string DeviceID;
+	[JsonInclude]
+	[JsonPropertyName("device_id")]
+	[JsonRequired]
+	internal string DeviceID { get; private init; }
 
-	[JsonProperty("identity_secret", Required = Required.Always)]
-	internal readonly string IdentitySecret;
+	[JsonInclude]
+	[JsonPropertyName("identity_secret")]
+	[JsonRequired]
+	internal string IdentitySecret { get; private init; }
 
-	[JsonProperty("revocation_code", Required = Required.Always)]
-	internal readonly string RevocationCode;
+	[JsonInclude]
+	[JsonPropertyName("revocation_code")]
+	[JsonRequired]
+	internal string RevocationCode { get; private init; }
 
-	[JsonProperty("secret_1", Required = Required.Always)]
-	internal readonly string Secret1;
+	[JsonInclude]
+	[JsonPropertyName("secret_1")]
+	[JsonRequired]
+	internal string Secret1 { get; private init; }
 
-	[JsonProperty("serial_number", Required = Required.Always)]
-	internal readonly ulong SerialNumber;
+	[JsonInclude]
+	[JsonPropertyName("serial_number")]
+	[JsonRequired]
+	internal ulong SerialNumber { get; private init; }
 
-	[JsonProperty("server_time", Required = Required.Always)]
-	internal readonly ulong ServerTime;
+	[JsonInclude]
+	[JsonPropertyName("server_time")]
+	[JsonRequired]
+	internal ulong ServerTime { get; private init; }
 
-	[JsonProperty("shared_secret", Required = Required.Always)]
-	internal readonly string SharedSecret;
+	[JsonInclude]
+	[JsonRequired]
+	internal MaFileSessionData Session { get; private init; }
 
-	[JsonProperty("status", Required = Required.Always)]
-	internal readonly int Status;
+	[JsonInclude]
+	[JsonPropertyName("shared_secret")]
+	[JsonRequired]
+	internal string SharedSecret { get; private init; }
 
-	[JsonProperty("token_gid", Required = Required.Always)]
-	internal readonly string TokenGid;
+	[JsonInclude]
+	[JsonPropertyName("status")]
+	[JsonRequired]
+	internal int Status { get; private init; }
 
-	[JsonProperty("uri", Required = Required.Always)]
-	internal readonly string Uri;
+	[JsonInclude]
+	[JsonPropertyName("token_gid")]
+	[JsonRequired]
+	internal string TokenGid { get; private init; }
 
-	internal MaFileData(CTwoFactor_AddAuthenticator_Response data, string deviceID) {
+	[JsonInclude]
+	[JsonPropertyName("uri")]
+	[JsonRequired]
+	internal string Uri { get; private init; }
+
+	internal MaFileData(CTwoFactor_AddAuthenticator_Response data, ulong steamID, string deviceID) {
 		ArgumentNullException.ThrowIfNull(data);
 
-		if (string.IsNullOrEmpty(deviceID)) {
-			throw new ArgumentNullException(nameof(deviceID));
+		if ((steamID == 0) || !new SteamID(steamID).IsIndividualAccount) {
+			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
+
+		ArgumentException.ThrowIfNullOrEmpty(deviceID);
 
 		AccountName = data.account_name;
 		DeviceID = deviceID;
@@ -73,6 +104,7 @@ internal sealed class MaFileData {
 		Secret1 = Convert.ToBase64String(data.secret_1);
 		SerialNumber = data.serial_number;
 		ServerTime = data.server_time;
+		Session = new MaFileSessionData(steamID);
 		SharedSecret = Convert.ToBase64String(data.shared_secret);
 		Status = data.status;
 		TokenGid = data.token_gid;

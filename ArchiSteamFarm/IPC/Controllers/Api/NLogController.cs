@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +24,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
@@ -30,13 +32,15 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
+using ArchiSteamFarm.Helpers.Json;
 using ArchiSteamFarm.IPC.Responses;
 using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.NLog;
 using ArchiSteamFarm.NLog.Targets;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json;
+using Microsoft.Extensions.Hosting;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
@@ -44,32 +48,36 @@ namespace ArchiSteamFarm.IPC.Controllers.Api;
 public sealed class NLogController : ArchiController {
 	private static readonly ConcurrentDictionary<WebSocket, (SemaphoreSlim Semaphore, CancellationToken CancellationToken)> ActiveLogWebSockets = new();
 
-	/// <summary>
-	///     Fetches ASF log file, this works on assumption that the log file is in fact generated, as user could disable it through custom configuration.
-	/// </summary>
-	/// <param name="count">Maximum amount of lines from the log file returned. The respone naturally might have less amount than specified, if you've read whole file already.</param>
-	/// <param name="lastAt">Ending index, used for pagination. Omit it for the first request, then initialize to TotalLines returned, and on every following request subtract count that you've used in the previous request from it until you hit 0 or less, which means you've read whole file already.</param>
+	private readonly IHostApplicationLifetime ApplicationLifetime;
+
+	public NLogController(IHostApplicationLifetime applicationLifetime) {
+		ArgumentNullException.ThrowIfNull(applicationLifetime);
+
+		ApplicationLifetime = applicationLifetime;
+	}
+
+	[EndpointSummary("Fetches ASF log file, this works on assumption that the log file is in fact generated, as user could disable it through custom configuration")]
 	[HttpGet("File")]
-	[ProducesResponseType(typeof(GenericResponse<GenericResponse<LogResponse>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.ServiceUnavailable)]
-	public async Task<ActionResult<GenericResponse>> FileGet(int count = 100, int lastAt = 0) {
+	[ProducesResponseType<GenericResponse<GenericResponse<LogResponse>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.ServiceUnavailable)]
+	public async Task<ActionResult<GenericResponse>> FileGet([Description("Maximum amount of lines from the log file returned. The respone naturally might have less amount than specified, if you've read whole file already")] int count = 100, [Description("Ending index, used for pagination. Omit it for the first request, then initialize to TotalLines returned, and on every following request subtract count that you've used in the previous request from it until you hit 0 or less, which means you've read whole file already")] int lastAt = 0) {
 		if (count <= 0) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(count))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(count))));
 		}
 
 		if (lastAt < 0) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(lastAt))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(lastAt))));
 		}
 
 		if (!Logging.LogFileExists) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(SharedInfo.LogFile))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(SharedInfo.LogFile))));
 		}
 
 		string[]? lines = await Logging.ReadLogFileLines().ConfigureAwait(false);
 
 		if ((lines == null) || (lines.Length == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(SharedInfo.LogFile))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(SharedInfo.LogFile))));
 		}
 
 		if ((lastAt == 0) || (lastAt > lines.Length)) {
@@ -81,22 +89,18 @@ public sealed class NLogController : ArchiController {
 		return Ok(new GenericResponse<LogResponse>(new LogResponse(lines.Length, lines[startFrom..lastAt])));
 	}
 
-	/// <summary>
-	///     Fetches ASF log in realtime.
-	/// </summary>
-	/// <remarks>
-	///     This API endpoint requires a websocket connection.
-	/// </remarks>
+	[EndpointDescription("This API endpoint requires a websocket connection")]
+	[EndpointSummary("Fetches ASF log in realtime")]
 	[HttpGet]
-	[ProducesResponseType(typeof(IEnumerable<GenericResponse<string>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
-	public async Task<ActionResult> Get(CancellationToken cancellationToken) {
+	[ProducesResponseType<IEnumerable<GenericResponse<string>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult> Get() {
 		if (HttpContext == null) {
 			throw new InvalidOperationException(nameof(HttpContext));
 		}
 
 		if (!HttpContext.WebSockets.IsWebSocketRequest) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError!, $"{nameof(HttpContext.WebSockets.IsWebSocketRequest)}: {HttpContext.WebSockets.IsWebSocketRequest}")));
+			return BadRequest(new GenericResponse(false, Strings.FormatWarningFailedWithError($"{nameof(HttpContext.WebSockets.IsWebSocketRequest)}: {HttpContext.WebSockets.IsWebSocketRequest}")));
 		}
 
 		// From now on we can return only EmptyResult as the response stream is already being used by existing websocket connection
@@ -106,7 +110,9 @@ public sealed class NLogController : ArchiController {
 
 			SemaphoreSlim sendSemaphore = new(1, 1);
 
-			if (!ActiveLogWebSockets.TryAdd(webSocket, (sendSemaphore, cancellationToken))) {
+			using CancellationTokenSource cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted, ApplicationLifetime.ApplicationStopping);
+
+			if (!ActiveLogWebSockets.TryAdd(webSocket, (sendSemaphore, cancellationTokenSource.Token))) {
 				sendSemaphore.Dispose();
 
 				return new EmptyResult();
@@ -115,20 +121,22 @@ public sealed class NLogController : ArchiController {
 			try {
 				// Push initial history if available
 				if (ArchiKestrel.HistoryTarget != null) {
-					// ReSharper disable once AccessToDisposedClosure - we're waiting for completion with Task.WhenAll(), we're not going to exit using block
-					await Task.WhenAll(ArchiKestrel.HistoryTarget.ArchivedMessages.Select(archivedMessage => PostLoggedMessageUpdate(webSocket, archivedMessage, sendSemaphore, cancellationToken))).ConfigureAwait(false);
+					// ReSharper disable AccessToDisposedClosure - we're waiting for completion with Task.WhenAll(), we're not going to exit using block
+					await Task.WhenAll(ArchiKestrel.HistoryTarget.ArchivedMessages.Select(archivedMessage => PostLoggedMessageUpdate(webSocket, archivedMessage, sendSemaphore, cancellationTokenSource.Token))).ConfigureAwait(false);
+
+					// ReSharper restore AccessToDisposedClosure - we're waiting for completion with Task.WhenAll(), we're not going to exit using block
 				}
 
-				while (webSocket.State == WebSocketState.Open) {
-					WebSocketReceiveResult result = await webSocket.ReceiveAsync(Array.Empty<byte>(), cancellationToken).ConfigureAwait(false);
+				while ((webSocket.State == WebSocketState.Open) && !cancellationTokenSource.IsCancellationRequested) {
+					WebSocketReceiveResult result = await webSocket.ReceiveAsync(Array.Empty<byte>(), cancellationTokenSource.Token).ConfigureAwait(false);
 
 					if (result.MessageType != WebSocketMessageType.Close) {
-						await webSocket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "You're not supposed to be sending any message but Close!", cancellationToken).ConfigureAwait(false);
+						await webSocket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "You're not supposed to be sending any message but Close!", cancellationTokenSource.Token).ConfigureAwait(false);
 
 						break;
 					}
 
-					await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", cancellationToken).ConfigureAwait(false);
+					await webSocket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", cancellationTokenSource.Token).ConfigureAwait(false);
 
 					break;
 				}
@@ -156,18 +164,14 @@ public sealed class NLogController : ArchiController {
 			return;
 		}
 
-		string json = JsonConvert.SerializeObject(new GenericResponse<string>(newHistoryEntryArgs.Message));
+		string json = new GenericResponse<string>(newHistoryEntryArgs.Message).ToJsonText();
 
 		await Task.WhenAll(ActiveLogWebSockets.Where(static kv => kv.Key.State == WebSocketState.Open).Select(kv => PostLoggedJsonUpdate(kv.Key, json, kv.Value.Semaphore, kv.Value.CancellationToken))).ConfigureAwait(false);
 	}
 
 	private static async Task PostLoggedJsonUpdate(WebSocket webSocket, string json, SemaphoreSlim sendSemaphore, CancellationToken cancellationToken) {
 		ArgumentNullException.ThrowIfNull(webSocket);
-
-		if (string.IsNullOrEmpty(json)) {
-			throw new ArgumentNullException(nameof(json));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(json);
 		ArgumentNullException.ThrowIfNull(sendSemaphore);
 
 		if (cancellationToken.IsCancellationRequested || (webSocket.State != WebSocketState.Open)) {
@@ -203,18 +207,14 @@ public sealed class NLogController : ArchiController {
 
 	private static async Task PostLoggedMessageUpdate(WebSocket webSocket, string loggedMessage, SemaphoreSlim sendSemaphore, CancellationToken cancellationToken) {
 		ArgumentNullException.ThrowIfNull(webSocket);
-
-		if (string.IsNullOrEmpty(loggedMessage)) {
-			throw new ArgumentNullException(nameof(loggedMessage));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(loggedMessage);
 		ArgumentNullException.ThrowIfNull(sendSemaphore);
 
 		if (cancellationToken.IsCancellationRequested || (webSocket.State != WebSocketState.Open)) {
 			return;
 		}
 
-		string response = JsonConvert.SerializeObject(new GenericResponse<string>(loggedMessage));
+		string response = new GenericResponse<string>(loggedMessage).ToJsonText();
 
 		await PostLoggedJsonUpdate(webSocket, response, sendSemaphore, cancellationToken).ConfigureAwait(false);
 	}

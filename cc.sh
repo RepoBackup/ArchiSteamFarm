@@ -1,8 +1,6 @@
 #!/usr/bin/env sh
 set -eu
 
-TARGET_FRAMEWORK="net7.0"
-
 MAIN_PROJECT="ArchiSteamFarm"
 STEAM_TOKEN_DUMPER_NAME="${MAIN_PROJECT}.OfficialPlugins.SteamTokenDumper"
 TESTS_PROJECT="${MAIN_PROJECT}.Tests"
@@ -10,8 +8,7 @@ SOLUTION="${MAIN_PROJECT}.sln"
 CONFIGURATION="Release"
 OUT="out"
 OUT_ASF="${OUT}/result"
-OUT_STD="${OUT}/${STEAM_TOKEN_DUMPER_NAME}"
-PLUGINS="${MAIN_PROJECT}.OfficialPlugins.ItemsMatcher"
+PLUGINS="${MAIN_PROJECT}.OfficialPlugins.ItemsMatcher ${MAIN_PROJECT}.OfficialPlugins.MobileAuthenticator"
 
 ANALYSIS=1
 ASF_UI=1
@@ -113,7 +110,7 @@ if [ "$ASF_UI" -eq 1 ]; then
 	fi
 fi
 
-DOTNET_FLAGS="-c $CONFIGURATION -f $TARGET_FRAMEWORK -p:ContinuousIntegrationBuild=true -p:UseAppHost=false --nologo"
+DOTNET_FLAGS="-c $CONFIGURATION -p:ContinuousIntegrationBuild=true -p:UseAppHost=false --nologo"
 PUBLISH_FLAGS="-r ${os_type}-${cpu_architecture} --no-self-contained"
 
 if [ "$ANALYSIS" -eq 0 ]; then

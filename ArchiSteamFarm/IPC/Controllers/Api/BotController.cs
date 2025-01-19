@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,9 +24,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.IPC.Requests;
@@ -32,29 +34,55 @@ using ArchiSteamFarm.IPC.Responses;
 using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.Steam;
 using ArchiSteamFarm.Steam.Storage;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json.Linq;
 using SteamKit2;
+using SteamKit2.Internal;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/Bot")]
 public sealed class BotController : ArchiController {
-	/// <summary>
-	///     Deletes all files related to given bots.
-	/// </summary>
-	[HttpDelete("{botNames:required}")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
-	public async Task<ActionResult<GenericResponse>> BotDelete(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
+	[EndpointSummary("Adds (free) licenses on given bots")]
+	[HttpPost("{botNames:required}/AddLicense")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, BotAddLicenseResponse>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult<GenericResponse>> AddLicensePost(string botNames, [FromBody] BotAddLicenseRequest request) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentNullException.ThrowIfNull(request);
+
+		if ((request.Apps?.IsEmpty != false) && (request.Packages?.IsEmpty != false)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty($"{nameof(request.Apps)} && {nameof(request.Packages)}")));
 		}
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
+		}
+
+		IList<BotAddLicenseResponse> results = await Utilities.InParallel(bots.Select(bot => AddLicense(bot, request))).ConfigureAwait(false);
+
+		Dictionary<string, BotAddLicenseResponse> result = new(bots.Count, Bot.BotsComparer);
+
+		foreach (Bot bot in bots) {
+			result[bot.BotName] = results[result.Count];
+		}
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, BotAddLicenseResponse>>(result));
+	}
+
+	[EndpointSummary("Deletes all files related to given bots")]
+	[HttpDelete("{botNames:required}")]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult<GenericResponse>> BotDelete(string botNames) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<bool> results = await Utilities.InParallel(bots.Select(static bot => bot.DeleteAllRelatedFiles())).ConfigureAwait(false);
@@ -62,38 +90,28 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(results.All(static result => result)));
 	}
 
-	/// <summary>
-	///     Fetches common info related to given bots.
-	/// </summary>
+	[EndpointSummary("Fetches common info related to given bots")]
 	[HttpGet("{botNames:required}")]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyDictionary<string, Bot>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, Bot>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public ActionResult<GenericResponse> BotGet(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if (bots == null) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(bots))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(bots))));
 		}
 
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, Bot>>(bots.Where(static bot => !string.IsNullOrEmpty(bot.BotName)).ToDictionary(static bot => bot.BotName, static bot => bot, Bot.BotsComparer)));
 	}
 
-	/// <summary>
-	///     Updates bot config of given bot.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Updates bot config of given bot")]
 	[HttpPost("{botNames:required}")]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyDictionary<string, bool>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, bool>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> BotPost(string botNames, [FromBody] BotRequest request) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (Bot.Bots == null) {
@@ -108,10 +126,10 @@ public sealed class BotController : ArchiController {
 
 		request.BotConfig.Saving = true;
 
-		HashSet<string> bots = botNames.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).ToHashSet(Bot.BotsComparer);
+		HashSet<string> bots = botNames.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries).ToHashSet(Bot.BotsComparer);
 
 		if (bots.Any(static botName => !ASF.IsValidBotName(botName))) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(botNames))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(botNames))));
 		}
 
 		Dictionary<string, bool> result = new(bots.Count, Bot.BotsComparer);
@@ -134,9 +152,9 @@ public sealed class BotController : ArchiController {
 				}
 
 				if (bot.BotConfig.AdditionalProperties?.Count > 0) {
-					request.BotConfig.AdditionalProperties ??= new Dictionary<string, JToken>(bot.BotConfig.AdditionalProperties.Count, bot.BotConfig.AdditionalProperties.Comparer);
+					request.BotConfig.AdditionalProperties ??= new Dictionary<string, JsonElement>(bot.BotConfig.AdditionalProperties.Count, bot.BotConfig.AdditionalProperties.Comparer);
 
-					foreach ((string key, JToken value) in bot.BotConfig.AdditionalProperties.Where(property => !request.BotConfig.AdditionalProperties.ContainsKey(property.Key))) {
+					foreach ((string key, JsonElement value) in bot.BotConfig.AdditionalProperties.Where(property => !request.BotConfig.AdditionalProperties.ContainsKey(property.Key))) {
 						request.BotConfig.AdditionalProperties.Add(key, value);
 					}
 
@@ -149,7 +167,7 @@ public sealed class BotController : ArchiController {
 			if (string.IsNullOrEmpty(filePath)) {
 				ASF.ArchiLogger.LogNullError(filePath);
 
-				return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(filePath))));
+				return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(filePath))));
 			}
 
 			result[botName] = await BotConfig.Write(filePath, request.BotConfig).ConfigureAwait(false);
@@ -158,21 +176,17 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, bool>>(result.Values.All(static value => value), result));
 	}
 
-	/// <summary>
-	///     Removes BGR output files of given bots.
-	/// </summary>
+	[EndpointSummary("Removes BGR output files of given bots")]
 	[HttpDelete("{botNames:required}/GamesToRedeemInBackground")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> GamesToRedeemInBackgroundDelete(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<bool> results = await Utilities.InParallel(bots.Select(static bot => Task.Run(bot.DeleteRedeemedKeysFiles))).ConfigureAwait(false);
@@ -180,21 +194,17 @@ public sealed class BotController : ArchiController {
 		return Ok(results.All(static result => result) ? new GenericResponse(true) : new GenericResponse(false, Strings.WarningFailed));
 	}
 
-	/// <summary>
-	///     Fetches BGR output files of given bots.
-	/// </summary>
+	[EndpointSummary("Fetches BGR output files of given bots")]
 	[HttpGet("{botNames:required}/GamesToRedeemInBackground")]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyDictionary<string, GamesToRedeemInBackgroundResponse>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, GamesToRedeemInBackgroundResponse>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> GamesToRedeemInBackgroundGet(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> results = await Utilities.InParallel(bots.Select(static bot => bot.GetUsedAndUnusedKeys())).ConfigureAwait(false);
@@ -209,34 +219,28 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, GamesToRedeemInBackgroundResponse>>(result));
 	}
 
-	/// <summary>
-	///     Adds keys to redeem using BGR to given bot.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Adds keys to redeem using BGR to given bot")]
 	[HttpPost("{botNames:required}/GamesToRedeemInBackground")]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyDictionary<string, IOrderedDictionary>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, IOrderedDictionary>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> GamesToRedeemInBackgroundPost(string botNames, [FromBody] BotGamesToRedeemInBackgroundRequest request) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (request.GamesToRedeemInBackground.Count == 0) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(request.GamesToRedeemInBackground))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(request.GamesToRedeemInBackground))));
 		}
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IOrderedDictionary validGamesToRedeemInBackground = Bot.ValidateGamesToRedeemInBackground(request.GamesToRedeemInBackground);
 
 		if (validGamesToRedeemInBackground.Count == 0) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(validGamesToRedeemInBackground))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(validGamesToRedeemInBackground))));
 		}
 
 		await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.AddGamesToRedeemInBackground(validGamesToRedeemInBackground)))).ConfigureAwait(false);
@@ -250,28 +254,22 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, IOrderedDictionary>>(result));
 	}
 
-	/// <summary>
-	///     Provides input value to given bot for next usage.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Provides input value to given bot for next usage")]
 	[HttpPost("{botNames:required}/Input")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> InputPost(string botNames, [FromBody] BotInputRequest request) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 		ArgumentNullException.ThrowIfNull(request);
 
 		if ((request.Type == ASF.EUserInputType.None) || !Enum.IsDefined(request.Type) || string.IsNullOrEmpty(request.Value)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, $"{nameof(request.Type)} || {nameof(request.Value)}")));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid($"{nameof(request.Type)} || {nameof(request.Value)}")));
 		}
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<bool> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => bot.SetUserInput(request.Type, request.Value)))).ConfigureAwait(false);
@@ -279,24 +277,18 @@ public sealed class BotController : ArchiController {
 		return Ok(results.All(static result => result) ? new GenericResponse(true) : new GenericResponse(false, Strings.WarningFailed));
 	}
 
-	/// <summary>
-	///     Pauses given bots.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Pauses given bots")]
 	[HttpPost("{botNames:required}/Pause")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> PausePost(string botNames, [FromBody] BotPauseRequest request) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 		ArgumentNullException.ThrowIfNull(request);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<(bool Success, string Message)> results = await Utilities.InParallel(bots.Select(bot => bot.Actions.Pause(request.Permanent, request.ResumeInSeconds))).ConfigureAwait(false);
@@ -304,42 +296,58 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(results.All(static result => result.Success), string.Join(Environment.NewLine, results.Select(static result => result.Message))));
 	}
 
-	/// <summary>
-	///     Redeems cd-keys on given bot.
-	/// </summary>
-	/// <remarks>
-	///     Response contains a map that maps each provided cd-key to its redeem result.
-	///     Redeem result can be a null value, this means that ASF didn't even attempt to send a request (e.g. because of bot not being connected to Steam network).
-	/// </remarks>
-	[Consumes("application/json")]
-	[HttpPost("{botNames:required}/Redeem")]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyDictionary<string, IReadOnlyDictionary<string, SteamApps.PurchaseResponseCallback>>>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
-	public async Task<ActionResult<GenericResponse>> RedeemPost(string botNames, [FromBody] BotRedeemRequest request) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
+	[EndpointSummary("Redeems points on given bots")]
+	[HttpPost("{botNames:required}/RedeemPoints/{definitionID:required}")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, EResult>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult<GenericResponse>> RedeemPointsPost(string botNames, uint definitionID, [FromQuery] bool forced = false) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentOutOfRangeException.ThrowIfZero(definitionID);
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
+		IList<EResult> results = await Utilities.InParallel(bots.Select(bot => bot.Actions.RedeemPoints(definitionID, forced))).ConfigureAwait(false);
+
+		Dictionary<string, EResult> result = new(bots.Count, Bot.BotsComparer);
+
+		foreach (Bot bot in bots) {
+			result[bot.BotName] = results[result.Count];
+		}
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, EResult>>(result));
+	}
+
+	[EndpointDescription("Response contains a map that maps each provided cd-key to its redeem result. Redeem result can be a null value, this means that ASF didn't even attempt to send a request (e.g. because of bot not being connected to Steam network)")]
+	[EndpointSummary("Redeems cd-keys on given bot")]
+	[HttpPost("{botNames:required}/Redeem")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, IReadOnlyDictionary<string, CStore_RegisterCDKey_Response>>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult<GenericResponse>> RedeemPost(string botNames, [FromBody] BotRedeemRequest request) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (request.KeysToRedeem.Count == 0) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(request.KeysToRedeem))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(request.KeysToRedeem))));
 		}
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
-		IList<SteamApps.PurchaseResponseCallback?> results = await Utilities.InParallel(bots.Select(bot => request.KeysToRedeem.Select(key => bot.Actions.RedeemKey(key))).SelectMany(static task => task)).ConfigureAwait(false);
+		IList<CStore_RegisterCDKey_Response?> results = await Utilities.InParallel(bots.Select(bot => request.KeysToRedeem.Select(key => bot.Actions.RedeemKey(key))).SelectMany(static task => task)).ConfigureAwait(false);
 
-		Dictionary<string, IReadOnlyDictionary<string, SteamApps.PurchaseResponseCallback?>> result = new(bots.Count, Bot.BotsComparer);
+		Dictionary<string, IReadOnlyDictionary<string, CStore_RegisterCDKey_Response?>> result = new(bots.Count, Bot.BotsComparer);
 
 		int count = 0;
 
 		foreach (Bot bot in bots) {
-			Dictionary<string, SteamApps.PurchaseResponseCallback?> responses = new(request.KeysToRedeem.Count, StringComparer.Ordinal);
+			Dictionary<string, CStore_RegisterCDKey_Response?> responses = new(request.KeysToRedeem.Count, StringComparer.Ordinal);
 			result[bot.BotName] = responses;
 
 			foreach (string key in request.KeysToRedeem) {
@@ -347,21 +355,15 @@ public sealed class BotController : ArchiController {
 			}
 		}
 
-		return Ok(new GenericResponse<IReadOnlyDictionary<string, IReadOnlyDictionary<string, SteamApps.PurchaseResponseCallback?>>>(result.Values.SelectMany(static responses => responses.Values).All(static value => value != null), result));
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, IReadOnlyDictionary<string, CStore_RegisterCDKey_Response?>>>(result.Values.SelectMany(static responses => responses.Values).All(static value => value != null), result));
 	}
 
-	/// <summary>
-	///     Renames given bot along with all its related files.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Renames given bot along with all its related files")]
 	[HttpPost("{botName:required}/Rename")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> RenamePost(string botName, [FromBody] BotRenameRequest request) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (Bot.Bots == null) {
@@ -369,11 +371,11 @@ public sealed class BotController : ArchiController {
 		}
 
 		if (string.IsNullOrEmpty(request.NewName) || !ASF.IsValidBotName(request.NewName) || Bot.Bots.ContainsKey(request.NewName)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(request.NewName))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(request.NewName))));
 		}
 
 		if (!Bot.Bots.TryGetValue(botName, out Bot? bot)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botName)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botName)));
 		}
 
 		bool result = await bot.Rename(request.NewName).ConfigureAwait(false);
@@ -381,21 +383,17 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(result));
 	}
 
-	/// <summary>
-	///     Resumes given bots.
-	/// </summary>
+	[EndpointSummary("Resumes given bots")]
 	[HttpPost("{botNames:required}/Resume")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> ResumePost(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<(bool Success, string Message)> results = await Utilities.InParallel(bots.Select(static bot => Task.Run(bot.Actions.Resume))).ConfigureAwait(false);
@@ -403,21 +401,17 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(results.All(static result => result.Success), string.Join(Environment.NewLine, results.Select(static result => result.Message))));
 	}
 
-	/// <summary>
-	///     Starts given bots.
-	/// </summary>
+	[EndpointSummary("Starts given bots")]
 	[HttpPost("{botNames:required}/Start")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> StartPost(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<(bool Success, string Message)> results = await Utilities.InParallel(bots.Select(static bot => Task.Run(bot.Actions.Start))).ConfigureAwait(false);
@@ -425,25 +419,63 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse(results.All(static result => result.Success), string.Join(Environment.NewLine, results.Select(static result => result.Message))));
 	}
 
-	/// <summary>
-	///     Stops given bots.
-	/// </summary>
+	[EndpointSummary("Stops given bots")]
 	[HttpPost("{botNames:required}/Stop")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> StopPost(string botNames) {
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
 		}
 
 		IList<(bool Success, string Message)> results = await Utilities.InParallel(bots.Select(static bot => Task.Run(bot.Actions.Stop))).ConfigureAwait(false);
 
 		return Ok(new GenericResponse(results.All(static result => result.Success), string.Join(Environment.NewLine, results.Select(static result => result.Message))));
+	}
+
+	private static async Task<BotAddLicenseResponse> AddLicense(Bot bot, BotAddLicenseRequest request) {
+		ArgumentNullException.ThrowIfNull(bot);
+		ArgumentNullException.ThrowIfNull(request);
+
+		Dictionary<uint, AddLicenseResult>? apps = null;
+		Dictionary<uint, AddLicenseResult>? packages = null;
+
+		if (request.Apps != null) {
+			apps = new Dictionary<uint, AddLicenseResult>(request.Apps.Count);
+
+			foreach (uint appID in request.Apps) {
+				if (!bot.IsConnectedAndLoggedOn) {
+					apps[appID] = new AddLicenseResult(EResult.Timeout, EPurchaseResultDetail.Timeout);
+
+					continue;
+				}
+
+				(EResult result, IReadOnlyCollection<uint>? grantedApps, IReadOnlyCollection<uint>? grantedPackages) = await bot.Actions.AddFreeLicenseApp(appID).ConfigureAwait(false);
+
+				apps[appID] = new AddLicenseResult(result, (grantedApps?.Count > 0) || (grantedPackages?.Count > 0) ? EPurchaseResultDetail.NoDetail : EPurchaseResultDetail.InvalidData);
+			}
+		}
+
+		if (request.Packages != null) {
+			packages = new Dictionary<uint, AddLicenseResult>(request.Packages.Count);
+
+			foreach (uint subID in request.Packages) {
+				if (!bot.IsConnectedAndLoggedOn) {
+					packages[subID] = new AddLicenseResult(EResult.Timeout, EPurchaseResultDetail.Timeout);
+
+					continue;
+				}
+
+				(EResult result, EPurchaseResultDetail purchaseResultDetail) = await bot.Actions.AddFreeLicensePackage(subID).ConfigureAwait(false);
+
+				packages[subID] = new AddLicenseResult(result, purchaseResultDetail);
+			}
+		}
+
+		return new BotAddLicenseResponse(apps, packages);
 	}
 }

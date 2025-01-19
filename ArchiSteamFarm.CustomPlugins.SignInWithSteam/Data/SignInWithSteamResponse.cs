@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,13 +22,18 @@
 // limitations under the License.
 
 using System;
-using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace ArchiSteamFarm.CustomPlugins.SignInWithSteam.Data;
 
 public sealed class SignInWithSteamResponse {
-	[JsonProperty(Required = Required.Always)]
-	public Uri ReturnURL { get; private set; }
+	[JsonInclude]
+	[JsonRequired]
+	public Uri ReturnURL { get; private init; }
 
-	internal SignInWithSteamResponse(Uri returnURL) => ReturnURL = returnURL ?? throw new ArgumentNullException(nameof(returnURL));
+	internal SignInWithSteamResponse(Uri returnURL) {
+		ArgumentNullException.ThrowIfNull(returnURL);
+
+		ReturnURL = returnURL;
+	}
 }

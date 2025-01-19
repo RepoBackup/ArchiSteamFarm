@@ -1,5 +1,12 @@
 <linker>
-	<!-- This is actually needed for ASF (JSON deserialization), not plugins -->
+	<!-- This is needed for ASF API controllers that use HttpContext -->
+	<assembly fullname="Microsoft.AspNetCore.Mvc.Core">
+		<type fullname="Microsoft.AspNetCore.Mvc.ControllerBase">
+			<property name="ControllerContext" />
+		</type>
+	</assembly>
+
+	<!-- This is needed for ASF (JSON deserialization) -->
 	<assembly fullname="System.Collections.Immutable">
 		<type fullname="System.Collections.Immutable.ImmutableDictionary" />
 		<type fullname="System.Collections.Immutable.ImmutableHashSet" />
@@ -11,7 +18,11 @@
 		<type fullname="System.Composition.ExportAttribute" />
 	</assembly>
 
-	<!-- Entries below are needed for our STD plugin -->
+	<!-- Entries below are needed for our official plugins -->
+	<assembly fullname="Microsoft.AspNetCore.Http.Extensions">
+		<type fullname="Microsoft.AspNetCore.Http.TagsAttribute" />
+	</assembly>
+
 	<assembly fullname="System.Linq">
 		<type fullname="System.Linq.Enumerable">
 			<method name="MaxBy" />
@@ -21,6 +32,12 @@
 	<assembly fullname="System.Runtime">
 		<type fullname="System.Random">
 			<method name="Next" />
+		</type>
+	</assembly>
+
+	<assembly fullname="System.Threading">
+		<type fullname="System.Threading.SemaphoreSlim">
+			<property name="CurrentCount" />
 		</type>
 	</assembly>
 </linker>

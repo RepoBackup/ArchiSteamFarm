@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -89,9 +87,7 @@ StackTrace:
 {2}</value>
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
-	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Выхад з ненулявым кодам памылкі!</value>
-	</data>
+	
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Памылка запыту да: {0}</value>
 		<comment>{0} will be replaced by URL of the request</comment>
@@ -190,6 +186,7 @@ StackTrace:
 		<value>Ваша версія: {0} | Апошняя версія: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
 	</data>
+	
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Калі ласка, увядзіце код 2FA з з мабільнага дадатку Steam: </value>
 		<comment>Please note that this translation should end with space</comment>
@@ -460,7 +457,6 @@ StackTrace:
 		<value>Падключэнне...</value>
 	</data>
 	
-	
 	<data name="BotStopping" xml:space="preserve">
 		<value>Спыненне...</value>
 	</data>
@@ -486,8 +482,6 @@ StackTrace:
 	<data name="BotStatusLocked" xml:space="preserve">
 		<value>Бот абмежаваны і не можа атрымліваць карты падчас фармавання.</value>
 	</data>
-	
-	
 	
 	
 	
@@ -555,11 +549,26 @@ StackTrace:
 	
 	
 	
-	
-	
 	<data name="PatchingFiles" xml:space="preserve">
 		<value>Выпраўленне файлаў ASF...</value>
 	</data>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 	
 	

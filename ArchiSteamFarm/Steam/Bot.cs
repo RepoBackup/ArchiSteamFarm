@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,15 +24,16 @@
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +41,7 @@ using AngleSharp.Dom;
 using ArchiSteamFarm.Collections;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Helpers;
+using ArchiSteamFarm.Helpers.Json;
 using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.NLog;
 using ArchiSteamFarm.Plugins;
@@ -52,8 +56,9 @@ using ArchiSteamFarm.Steam.Storage;
 using ArchiSteamFarm.Storage;
 using ArchiSteamFarm.Web;
 using JetBrains.Annotations;
-using Newtonsoft.Json;
+using Microsoft.IdentityModel.JsonWebTokens;
 using SteamKit2;
+using SteamKit2.Authentication;
 using SteamKit2.Internal;
 
 namespace ArchiSteamFarm.Steam;
@@ -66,7 +71,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte LoginCooldownInMinutes = 25; // Captcha disappears after around 20 minutes, so we make it 25
 	private const uint LoginID = 1242; // This must be the same for all ASF bots and all ASF processes
 	private const byte MaxLoginFailures = WebBrowser.MaxTries; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)course)
+	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
+	private const byte RegionRestrictionPlayableBlockMonths = 3;
 
 	[PublicAPI]
 	public static IReadOnlyDictionary<string, Bot>? BotsReadOnly => Bots;
@@ -76,8 +83,6 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal static EOSType OSType { get; private set; } = EOSType.Unknown;
 
 	private static readonly SemaphoreSlim BotsSemaphore = new(1, 1);
-
-	private static IMachineInfoProvider? CustomMachineInfoProvider;
 
 	[JsonIgnore]
 	[PublicAPI]
@@ -99,11 +104,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[PublicAPI]
 	public BotDatabase BotDatabase { get; }
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public string BotName { get; }
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public CardsFarmer CardsFarmer { get; }
 
@@ -111,11 +116,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[PublicAPI]
 	public Commands Commands { get; }
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public uint GamesToRedeemInBackgroundCount => BotDatabase.GamesToRedeemInBackgroundCount;
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public bool HasMobileAuthenticator => BotDatabase.MobileAuthenticator != null;
 
@@ -127,13 +132,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	[PublicAPI]
 	public bool IsAccountLocked => AccountFlags.HasFlag(EAccountFlags.Lockdown);
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public bool IsConnectedAndLoggedOn => SteamClient.SteamID != null;
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public bool IsPlayingPossible => !PlayingBlocked && !LibraryLocked;
+
+	[JsonInclude]
+	[PublicAPI]
+	public string? PublicIP => SteamClient.PublicIP?.ToString();
+
+	[JsonInclude]
+	[JsonPropertyName($"{SharedInfo.UlongCompatibilityStringPrefix}{nameof(SteamID)}")]
+	[PublicAPI]
+	public string SSteamID => SteamID.ToString(CultureInfo.InvariantCulture);
 
 	[JsonIgnore]
 	[PublicAPI]
@@ -148,23 +162,26 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	public SteamFriends SteamFriends { get; }
 
 	internal bool CanReceiveSteamCards => !IsAccountLimited && !IsAccountLocked;
+	internal bool HasLoginCodeReady => !string.IsNullOrEmpty(TwoFactorCode) || !string.IsNullOrEmpty(AuthCode);
 
 	private readonly CallbackManager CallbackManager;
-	private readonly SemaphoreSlim CallbackSemaphore = new(1, 1);
+	private readonly SemaphoreSlim ConnectionSemaphore = new(1, 1);
 	private readonly SemaphoreSlim GamesRedeemerInBackgroundSemaphore = new(1, 1);
 	private readonly Timer HeartBeatTimer;
 	private readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
 	private readonly SemaphoreSlim MessagingSemaphore = new(1, 1);
 	private readonly ConcurrentDictionary<UserNotificationsCallback.EUserNotification, uint> PastNotifications = new();
+	private readonly SemaphoreSlim RefreshWebSessionSemaphore = new(1, 1);
 	private readonly SemaphoreSlim SendCompleteTypesSemaphore = new(1, 1);
 	private readonly SteamClient SteamClient;
-	private readonly ConcurrentHashSet<ulong> SteamFamilySharingIDs = new();
+	private readonly ConcurrentHashSet<ulong> SteamFamilySharingIDs = [];
 	private readonly SteamUser SteamUser;
 	private readonly Trading Trading;
+	private readonly SemaphoreSlim UnpackBoosterPacksSemaphore = new(1, 1);
 
 	private IEnumerable<(string FilePath, EFileType FileType)> RelatedFiles {
 		get {
-			foreach (EFileType fileType in Enum.GetValues(typeof(EFileType))) {
+			foreach (EFileType fileType in Enum.GetValues<EFileType>()) {
 				string filePath = GetFilePath(fileType);
 
 				if (string.IsNullOrEmpty(filePath)) {
@@ -178,62 +195,105 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	/// <remarks>
-	///     Login keys are not guaranteed to be valid, we should use them only if we don't have full details available from the user
-	/// </remarks>
-	private bool ShouldUseLoginKeys => BotConfig.UseLoginKeys && (!BotConfig.IsSteamPasswordSet || !HasMobileAuthenticator);
-
-	[JsonProperty($"{SharedInfo.UlongCompatibilityStringPrefix}{nameof(SteamID)}")]
-	private string SSteamID => SteamID.ToString(CultureInfo.InvariantCulture);
-
-	[JsonProperty]
+	[JsonIgnore]
 	[PublicAPI]
+	public string? AccessToken {
+		get;
+
+		private set {
+			AccessTokenValidUntil = null;
+
+			if (string.IsNullOrEmpty(value)) {
+				field = null;
+
+				return;
+			}
+
+			if (!Utilities.TryReadJsonWebToken(value, out JsonWebToken? accessToken)) {
+				ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(accessToken)));
+
+				return;
+			}
+
+			field = value;
+
+			if (accessToken.ValidTo > DateTime.MinValue) {
+				AccessTokenValidUntil = accessToken.ValidTo;
+			}
+		}
+	}
+
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
 	public EAccountFlags AccountFlags { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
+	public string? AvatarHash { get; private set; }
+
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
 	public BotConfig BotConfig { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
 	[PublicAPI]
+	[Required]
 	public bool KeepRunning { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
 	[PublicAPI]
 	public string? Nickname { get; private set; }
 
 	[JsonIgnore]
 	[PublicAPI]
-	public ImmutableDictionary<uint, (EPaymentMethod PaymentMethod, DateTime TimeCreated)> OwnedPackageIDs { get; private set; } = ImmutableDictionary<uint, (EPaymentMethod PaymentMethod, DateTime TimeCreated)>.Empty;
+	public FrozenDictionary<uint, LicenseData> OwnedPackages { get; private set; } = FrozenDictionary<uint, LicenseData>.Empty;
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
 	[PublicAPI]
+	[Required]
 	public ASF.EUserInputType RequiredInput { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
 	[PublicAPI]
+	[Required]
 	public ulong SteamID { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
 	[PublicAPI]
+	[Required]
 	public long WalletBalance { get; private set; }
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
 	[PublicAPI]
+	[Required]
+	public long WalletBalanceDelayed { get; private set; }
+
+	[JsonInclude]
+	[JsonRequired]
+	[PublicAPI]
+	[Required]
 	public ECurrencyCode WalletCurrency { get; private set; }
 
 	internal byte HeartBeatFailures { get; private set; }
 	internal bool PlayingBlocked { get; private set; }
 	internal bool PlayingWasBlocked { get; private set; }
 
+	private DateTime? AccessTokenValidUntil;
 	private string? AuthCode;
-
-	[JsonProperty]
-	private string? AvatarHash;
-
+	private CancellationTokenSource? CallbacksAborted;
 	private Timer? ConnectionFailureTimer;
 	private bool FirstTradeSent;
 	private Timer? GamesRedeemerInBackgroundTimer;
+	private string? IPCountryCode;
 	private EResult LastLogOnResult;
 	private DateTime LastLogonSessionReplaced;
 	private bool LibraryLocked;
@@ -241,20 +301,27 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private ulong MasterChatGroupID;
 	private Timer? PlayingWasBlockedTimer;
 	private bool ReconnectOnUserInitiated;
+	private string? RefreshToken;
+	private Timer? RefreshTokensTimer;
 	private bool SendCompleteTypesScheduled;
 	private Timer? SendItemsTimer;
 	private bool SteamParentalActive;
-	private SteamSaleEvent? SteamSaleEvent;
+	private Timer? TradeCheckTimer;
 	private string? TwoFactorCode;
+	private bool UnpackBoosterPacksScheduled;
 
 	private Bot(string botName, BotConfig botConfig, BotDatabase botDatabase) {
-		BotName = !string.IsNullOrEmpty(botName) ? botName : throw new ArgumentNullException(nameof(botName));
-		BotConfig = botConfig ?? throw new ArgumentNullException(nameof(botConfig));
-		BotDatabase = botDatabase ?? throw new ArgumentNullException(nameof(botDatabase));
+		ArgumentException.ThrowIfNullOrEmpty(botName);
+		ArgumentNullException.ThrowIfNull(botConfig);
+		ArgumentNullException.ThrowIfNull(botDatabase);
 
 		if (ASF.GlobalDatabase == null) {
 			throw new InvalidOperationException(nameof(ASF.GlobalDatabase));
 		}
+
+		BotName = botName;
+		BotConfig = botConfig;
+		BotDatabase = botDatabase;
 
 		ArchiLogger = new ArchiLogger(botName);
 
@@ -269,29 +336,33 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				builder.WithProtocolTypes(ASF.GlobalConfig?.SteamProtocols ?? GlobalConfig.DefaultSteamProtocols);
 				builder.WithServerListProvider(ASF.GlobalDatabase.ServerListProvider);
 
-				if (CustomMachineInfoProvider != null) {
-					builder.WithMachineInfoProvider(CustomMachineInfoProvider);
+				IMachineInfoProvider? customMachineInfoProvider = PluginsCore.GetCustomMachineInfoProvider(this).Result;
+
+				if (customMachineInfoProvider != null) {
+					builder.WithMachineInfoProvider(customMachineInfoProvider);
 				}
 			}
 		);
 
+		// Decrease the ServerList cache in order to fight with Steam gibberish data
+		SteamConfiguration.ServerList.ServerListBeforeRefreshTimeSpan = TimeSpan.FromHours(1);
+
 		// Initialize
 		SteamClient = new SteamClient(SteamConfiguration, botName);
 
-		if (Debugging.IsDebugConfigured && Directory.Exists(SharedInfo.DebugDirectory)) {
-			string debugListenerPath = Path.Combine(SharedInfo.DebugDirectory, botName);
+		if (Debugging.IsDebugConfigured && Directory.Exists(ASF.DebugDirectory)) {
+			string debugListenerPath = Path.Combine(ASF.DebugDirectory, botName);
 
 			try {
 				Directory.CreateDirectory(debugListenerPath);
+
 				SteamClient.DebugNetworkListener = new NetHookNetworkListener(debugListenerPath, SteamClient);
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 			}
 		}
 
-		SteamUnifiedMessages? steamUnifiedMessages = SteamClient.GetHandler<SteamUnifiedMessages>();
-
-		ArchiHandler = new ArchiHandler(ArchiLogger, steamUnifiedMessages ?? throw new InvalidOperationException(nameof(steamUnifiedMessages)));
+		ArchiHandler = new ArchiHandler(ArchiLogger, SteamClient.GetHandler<SteamUnifiedMessages>() ?? throw new InvalidOperationException(nameof(SteamUnifiedMessages)));
 		SteamClient.AddHandler(ArchiHandler);
 
 		CallbackManager = new CallbackManager(SteamClient);
@@ -306,19 +377,18 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		CallbackManager.Subscribe<SteamFriends.FriendsListCallback>(OnFriendsList);
 		CallbackManager.Subscribe<SteamFriends.PersonaStateCallback>(OnPersonaState);
 
-		CallbackManager.Subscribe<SteamUnifiedMessages.ServiceMethodNotification>(OnServiceMethod);
-
 		SteamUser = SteamClient.GetHandler<SteamUser>() ?? throw new InvalidOperationException(nameof(SteamUser));
 		CallbackManager.Subscribe<SteamUser.LoggedOffCallback>(OnLoggedOff);
 		CallbackManager.Subscribe<SteamUser.LoggedOnCallback>(OnLoggedOn);
-		CallbackManager.Subscribe<SteamUser.LoginKeyCallback>(OnLoginKey);
-		CallbackManager.Subscribe<SteamUser.UpdateMachineAuthCallback>(OnMachineAuth);
+		CallbackManager.Subscribe<SteamUser.PlayingSessionStateCallback>(OnPlayingSessionState);
 		CallbackManager.Subscribe<SteamUser.VanityURLChangedCallback>(OnVanityURLChangedCallback);
-		CallbackManager.Subscribe<SteamUser.WalletInfoCallback>(OnWalletUpdate);
+		CallbackManager.Subscribe<SteamUser.WalletInfoCallback>(OnWalletInfo);
 
-		CallbackManager.Subscribe<ArchiHandler.PlayingSessionStateCallback>(OnPlayingSessionState);
-		CallbackManager.Subscribe<ArchiHandler.SharedLibraryLockStatusCallback>(OnSharedLibraryLockStatus);
+		CallbackManager.Subscribe<SharedLibraryLockStatusCallback>(OnSharedLibraryLockStatus);
 		CallbackManager.Subscribe<UserNotificationsCallback>(OnUserNotifications);
+
+		CallbackManager.SubscribeServiceNotification<ChatRoomClient, CChatRoom_IncomingChatMessage_Notification>(OnIncomingChatMessage);
+		CallbackManager.SubscribeServiceNotification<FriendMessagesClient, CFriendMessages_IncomingMessage_Notification>(OnIncomingMessage);
 
 		Actions = new Actions(this);
 		CardsFarmer = new CardsFarmer(this);
@@ -334,44 +404,37 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	public void Dispose() {
-		// Those are objects that are always being created if constructor doesn't throw exception
-		ArchiWebHandler.Dispose();
-		BotDatabase.Dispose();
-		CallbackSemaphore.Dispose();
-		GamesRedeemerInBackgroundSemaphore.Dispose();
-		InitializationSemaphore.Dispose();
-		MessagingSemaphore.Dispose();
-		SendCompleteTypesSemaphore.Dispose();
-		Trading.Dispose();
+		DisposeShared();
 
 		Actions.Dispose();
 		CardsFarmer.Dispose();
 		HeartBeatTimer.Dispose();
 
 		// Those are objects that might be null and the check should be in-place
+		CallbacksAborted?.Cancel();
+		CallbacksAborted?.Dispose();
 		ConnectionFailureTimer?.Dispose();
 		GamesRedeemerInBackgroundTimer?.Dispose();
 		PlayingWasBlockedTimer?.Dispose();
+		RefreshTokensTimer?.Dispose();
 		SendItemsTimer?.Dispose();
-		SteamSaleEvent?.Dispose();
+		TradeCheckTimer?.Dispose();
 	}
 
 	public async ValueTask DisposeAsync() {
-		// Those are objects that are always being created if constructor doesn't throw exception
-		ArchiWebHandler.Dispose();
-		BotDatabase.Dispose();
-		CallbackSemaphore.Dispose();
-		GamesRedeemerInBackgroundSemaphore.Dispose();
-		InitializationSemaphore.Dispose();
-		MessagingSemaphore.Dispose();
-		SendCompleteTypesSemaphore.Dispose();
-		Trading.Dispose();
+		DisposeShared();
 
 		await Actions.DisposeAsync().ConfigureAwait(false);
 		await CardsFarmer.DisposeAsync().ConfigureAwait(false);
 		await HeartBeatTimer.DisposeAsync().ConfigureAwait(false);
 
 		// Those are objects that might be null and the check should be in-place
+		if (CallbacksAborted != null) {
+			await CallbacksAborted.CancelAsync().ConfigureAwait(false);
+
+			CallbacksAborted.Dispose();
+		}
+
 		if (ConnectionFailureTimer != null) {
 			await ConnectionFailureTimer.DisposeAsync().ConfigureAwait(false);
 		}
@@ -384,12 +447,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			await PlayingWasBlockedTimer.DisposeAsync().ConfigureAwait(false);
 		}
 
+		if (RefreshTokensTimer != null) {
+			await RefreshTokensTimer.DisposeAsync().ConfigureAwait(false);
+		}
+
 		if (SendItemsTimer != null) {
 			await SendItemsTimer.DisposeAsync().ConfigureAwait(false);
 		}
 
-		if (SteamSaleEvent != null) {
-			await SteamSaleEvent.DisposeAsync().ConfigureAwait(false);
+		if (TradeCheckTimer != null) {
+			await TradeCheckTimer.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
@@ -436,7 +503,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			case BotConfig.EAccess.Master:
 				return EAccess.Master;
 			default:
-				ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(permission), permission));
+				ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(permission), permission));
 
 				return familySharingAccess;
 		}
@@ -444,9 +511,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	[PublicAPI]
 	public static Bot? GetBot(string botName) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		if (Bots == null) {
 			throw new InvalidOperationException(nameof(Bots));
@@ -465,46 +530,83 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	[PublicAPI]
 	public static HashSet<Bot>? GetBots(string args) {
-		if (string.IsNullOrEmpty(args)) {
-			throw new ArgumentNullException(nameof(args));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(args);
 
 		if (Bots == null) {
 			throw new InvalidOperationException(nameof(Bots));
 		}
 
-		string[] botNames = args.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+		if (BotsComparer == null) {
+			throw new InvalidOperationException(nameof(BotsComparer));
+		}
 
-		HashSet<Bot> result = new();
+		string[] botNames = args.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
+
+		HashSet<Bot> result = [];
 
 		foreach (string botName in botNames) {
-			if (botName.Equals(SharedInfo.ASF, StringComparison.OrdinalIgnoreCase)) {
-				IEnumerable<Bot> allBots = Bots.OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
-				result.UnionWith(allBots);
+			switch (botName.ToUpperInvariant()) {
+				case "@ALL":
+				case SharedInfo.ASF:
+					// We can return the result right away, as all bots have been matched already
+					return Bots.AsLinqThreadSafeEnumerable().OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value).ToHashSet();
+				case "@FARMING":
+					IEnumerable<Bot> farmingBots = Bots.Where(static bot => bot.Value.CardsFarmer.NowFarming).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(farmingBots);
 
-				return result;
+					continue;
+				case "@IDLE":
+					IEnumerable<Bot> idleBots = Bots.Where(static bot => !bot.Value.CardsFarmer.NowFarming).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(idleBots);
+
+					continue;
+				case "@OFFLINE":
+					IEnumerable<Bot> offlineBots = Bots.Where(static bot => !bot.Value.IsConnectedAndLoggedOn).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(offlineBots);
+
+					continue;
+				case "@ONLINE":
+					IEnumerable<Bot> onlineBots = Bots.Where(static bot => bot.Value.IsConnectedAndLoggedOn).OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
+					result.UnionWith(onlineBots);
+
+					continue;
 			}
 
-			if (botName.Contains("..", StringComparison.Ordinal)) {
-				string[] botRange = botName.Split(new[] { ".." }, StringSplitOptions.RemoveEmptyEntries);
+			if ((botName.Length > 2) && SharedInfo.RangeIndicators.Any(rangeIndicator => botName.Contains(rangeIndicator, StringComparison.Ordinal))) {
+				string[] botRange = botName.Split(SharedInfo.RangeIndicators, StringSplitOptions.RemoveEmptyEntries);
 
-				if (botRange.Length == 2) {
-					Bot? firstBot = GetBot(botRange[0]);
+				Bot? firstBot = GetBot(botRange[0]);
 
-					if (firstBot != null) {
-						Bot? lastBot = GetBot(botRange[1]);
+				if (firstBot != null) {
+					switch (botRange.Length) {
+						case 1:
+							// Either bot.. or ..bot
+							IEnumerable<Bot> query = Bots.AsLinqThreadSafeEnumerable().OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value);
 
-						if (lastBot != null) {
-							foreach (Bot bot in Bots.OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value).SkipWhile(bot => bot != firstBot)) {
+							query = botName.StartsWith("..", StringComparison.Ordinal) ? query.TakeWhile(bot => bot != firstBot) : query.SkipWhile(bot => bot != firstBot);
+
+							foreach (Bot bot in query) {
 								result.Add(bot);
-
-								if (bot == lastBot) {
-									break;
-								}
 							}
 
+							result.Add(firstBot);
+
 							continue;
-						}
+						case 2:
+							// firstBot..lastBot
+							Bot? lastBot = GetBot(botRange[1]);
+
+							if ((lastBot != null) && (BotsComparer.Compare(firstBot.BotName, lastBot.BotName) <= 0)) {
+								foreach (Bot bot in Bots.AsLinqThreadSafeEnumerable().OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value).SkipWhile(bot => bot != firstBot).TakeWhile(bot => bot != lastBot)) {
+									result.Add(bot);
+								}
+
+								result.Add(lastBot);
+
+								continue;
+							}
+
+							break;
 					}
 				}
 			}
@@ -523,17 +625,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				Regex regex;
 
 				try {
-#pragma warning disable CA3012
-					regex = new Regex(botsPattern, botsRegex);
-#pragma warning restore CA3012
+#pragma warning disable CA3012 // We're aware of a potential denial of service here, this is why we limit maximum matching time to a sane value
+					regex = new Regex(botsPattern, botsRegex, TimeSpan.FromSeconds(1));
+#pragma warning restore CA3012 // We're aware of a potential denial of service here, this is why we limit maximum matching time to a sane value
 				} catch (ArgumentException e) {
 					ASF.ArchiLogger.LogGenericWarningException(e);
 
 					return null;
 				}
 
-				IEnumerable<Bot> regexMatches = Bots.Where(kvp => regex.IsMatch(kvp.Key)).Select(static kvp => kvp.Value);
-				result.UnionWith(regexMatches);
+				try {
+					IEnumerable<Bot> regexMatches = Bots.Where(kvp => regex.IsMatch(kvp.Key)).Select(static kvp => kvp.Value);
+
+					result.UnionWith(regexMatches);
+				} catch (RegexMatchTimeoutException e) {
+					ASF.ArchiLogger.LogGenericWarningException(e);
+				}
 
 				continue;
 			}
@@ -552,9 +659,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	[PublicAPI]
 	public static string GetFilePath(string botName, EFileType fileType) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		if (!Enum.IsDefined(fileType)) {
 			throw new InvalidEnumArgumentException(nameof(fileType), (int) fileType, typeof(EFileType));
@@ -569,8 +674,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			EFileType.KeysToRedeemUnused => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUnusedExtension}",
 			EFileType.KeysToRedeemUsed => $"{botPath}{SharedInfo.KeysExtension}{SharedInfo.KeysUsedExtension}",
 			EFileType.MobileAuthenticator => $"{botPath}{SharedInfo.MobileAuthenticatorExtension}",
-			EFileType.SentryFile => $"{botPath}{SharedInfo.SentryHashExtension}",
-			_ => throw new ArgumentOutOfRangeException(nameof(fileType))
+			_ => throw new InvalidOperationException(nameof(fileType))
 		};
 	}
 
@@ -587,7 +691,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	public T? GetHandler<T>() where T : ClientMsgHandler => SteamClient.GetHandler<T>();
 
 	[PublicAPI]
-	public static HashSet<Asset> GetItemsForFullSets(IReadOnlyCollection<Asset> inventory, IReadOnlyDictionary<(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity), (uint SetsToExtract, byte ItemsPerSet)> amountsToExtract, ushort maxItems = Trading.MaxItemsPerTrade) {
+	public static HashSet<Asset> GetItemsForFullSets(IReadOnlyCollection<Asset> inventory, IReadOnlyDictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), (uint SetsToExtract, byte ItemsPerSet)> amountsToExtract, ushort maxItems = Trading.MaxItemsPerTrade) {
 		if ((inventory == null) || (inventory.Count == 0)) {
 			throw new ArgumentNullException(nameof(inventory));
 		}
@@ -596,14 +700,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentNullException(nameof(amountsToExtract));
 		}
 
-		if (maxItems < MinCardsPerBadge) {
-			throw new ArgumentOutOfRangeException(nameof(maxItems));
-		}
+		ArgumentOutOfRangeException.ThrowIfLessThan(maxItems, MinCardsPerBadge);
 
-		HashSet<Asset> result = new();
-		Dictionary<(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity), Dictionary<ulong, HashSet<Asset>>> itemsPerClassIDPerSet = inventory.GroupBy(static item => (item.RealAppID, item.Type, item.Rarity)).ToDictionary(static grouping => grouping.Key, static grouping => grouping.GroupBy(static item => item.ClassID).ToDictionary(static group => group.Key, static group => group.ToHashSet()));
+		HashSet<Asset> result = [];
+		Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), Dictionary<ulong, HashSet<Asset>>> itemsPerClassIDPerSet = inventory.GroupBy(static item => (item.RealAppID, item.Type, item.Rarity)).ToDictionary(static grouping => grouping.Key, static grouping => grouping.GroupBy(static item => item.ClassID).ToDictionary(static group => group.Key, static group => group.ToHashSet()));
 
-		foreach (((uint RealAppID, Asset.EType Type, Asset.ERarity Rarity) set, (uint setsToExtract, byte itemsPerSet)) in amountsToExtract.OrderBy(static kv => kv.Value.ItemsPerSet)) {
+		foreach (((uint RealAppID, EAssetType Type, EAssetRarity Rarity) set, (uint setsToExtract, byte itemsPerSet)) in amountsToExtract.OrderBy(static kv => kv.Value.ItemsPerSet)) {
 			if (!itemsPerClassIDPerSet.TryGetValue(set, out Dictionary<ulong, HashSet<Asset>>? itemsPerClassID)) {
 				continue;
 			}
@@ -627,16 +729,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				ushort classRemaining = realSetsToExtract;
 
 				foreach (Asset item in itemsOfClass.TakeWhile(_ => classRemaining > 0)) {
-					if (item.Amount > classRemaining) {
-						Asset itemToSend = item.CreateShallowCopy();
+					if (classRemaining >= item.Amount) {
+						result.Add(item);
+
+						classRemaining -= (ushort) item.Amount;
+					} else {
+						Asset itemToSend = item.DeepClone();
 						itemToSend.Amount = classRemaining;
 						result.Add(itemToSend);
 
 						classRemaining = 0;
-					} else {
-						result.Add(item);
-
-						classRemaining -= (ushort) item.Amount;
 					}
 				}
 			}
@@ -726,9 +828,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
 
-		if (tradeID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(tradeID));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(tradeID);
 
 		if (Bots == null) {
 			throw new InvalidOperationException(nameof(Bots));
@@ -765,9 +865,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentNullException(nameof(appIDs));
 		}
 
-#pragma warning disable CA1508 // False positive, not every IReadOnlyCollection is ISet, and this is public API
-		ISet<uint> uniqueAppIDs = appIDs as ISet<uint> ?? appIDs.ToHashSet();
-#pragma warning restore CA1508 // False positive, not every IReadOnlyCollection is ISet, and this is public API
+		IReadOnlySet<uint> uniqueAppIDs = appIDs as IReadOnlySet<uint> ?? appIDs.ToHashSet();
 
 		switch (ASF.GlobalConfig?.OptimizationMode) {
 			case GlobalConfig.EOptimizationMode.MinMemoryUsage:
@@ -798,9 +896,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
 
-		if (string.IsNullOrEmpty(message)) {
-			throw new ArgumentNullException(nameof(message));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(message);
 
 		if (!IsConnectedAndLoggedOn) {
 			return false;
@@ -823,17 +919,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	[PublicAPI]
 	public async Task<bool> SendMessage(ulong chatGroupID, ulong chatID, string message) {
-		if (chatGroupID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(chatGroupID));
-		}
-
-		if (chatID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(chatID));
-		}
-
-		if (string.IsNullOrEmpty(message)) {
-			throw new ArgumentNullException(nameof(message));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(chatGroupID);
+		ArgumentOutOfRangeException.ThrowIfZero(chatID);
+		ArgumentException.ThrowIfNullOrEmpty(message);
 
 		if (!IsConnectedAndLoggedOn) {
 			return false;
@@ -860,12 +948,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new InvalidEnumArgumentException(nameof(inputType), (int) inputType, typeof(ASF.EUserInputType));
 		}
 
-		if (string.IsNullOrEmpty(inputValue)) {
-			throw new ArgumentNullException(nameof(inputValue));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(inputValue);
 
 		// This switch should cover ONLY bot properties
 		switch (inputType) {
+			case ASF.EUserInputType.DeviceConfirmation:
+				// Nothing to do for us
+				break;
 			case ASF.EUserInputType.Login:
 				BotConfig.SteamLogin = inputValue;
 
@@ -921,7 +1010,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			default:
-				throw new ArgumentOutOfRangeException(nameof(inputType));
+				throw new InvalidOperationException(nameof(inputType));
 		}
 
 		if (RequiredInput == inputType) {
@@ -1005,37 +1094,27 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	internal static string FormatBotResponse(string response, string botName) {
-		if (string.IsNullOrEmpty(response)) {
-			throw new ArgumentNullException(nameof(response));
-		}
-
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(response);
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		return $"{Environment.NewLine}<{botName}> {response}";
 	}
 
 	internal async Task<(uint PlayableAppID, DateTime IgnoredUntil, bool IgnoredGlobally)> GetAppDataForIdling(uint appID, float hoursPlayed, bool allowRecursiveDiscovery = true, bool optimisticDiscovery = true) {
-		if (appID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(appID));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
+		ArgumentOutOfRangeException.ThrowIfNegative(hoursPlayed);
 
-		if (hoursPlayed < 0) {
-			throw new ArgumentOutOfRangeException(nameof(hoursPlayed));
-		}
-
-		HashSet<uint>? packageIDs = ASF.GlobalDatabase?.GetPackageIDs(appID, OwnedPackageIDs.Keys);
+		HashSet<uint>? packageIDs = ASF.GlobalDatabase?.GetPackageIDs(appID, OwnedPackages.Keys);
 
 		if ((packageIDs == null) || (packageIDs.Count == 0)) {
 			return (0, DateTime.MaxValue, true);
 		}
 
-		if ((hoursPlayed < CardsFarmer.HoursForRefund) && BotConfig.SkipRefundableGames) {
+		if ((hoursPlayed < CardsFarmer.HoursForRefund) && BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.SkipRefundableGames)) {
 			DateTime mostRecent = DateTime.MinValue;
 
 			foreach (uint packageID in packageIDs) {
-				if (!OwnedPackageIDs.TryGetValue(packageID, out (EPaymentMethod PaymentMethod, DateTime TimeCreated) packageData)) {
+				if (!OwnedPackages.TryGetValue(packageID, out LicenseData? packageData)) {
 					continue;
 				}
 
@@ -1053,6 +1132,56 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 		}
 
+		// Check region restrictions
+		if (!string.IsNullOrEmpty(IPCountryCode)) {
+			DateTime? regionRestrictedUntil = null;
+
+			DateTime safePlayableBefore = DateTime.UtcNow.AddMonths(-RegionRestrictionPlayableBlockMonths);
+
+			foreach (uint packageID in packageIDs) {
+				if (!OwnedPackages.TryGetValue(packageID, out LicenseData? ownedPackageData)) {
+					// We don't own that packageID, keep checking
+					continue;
+				}
+
+				if (ownedPackageData.TimeCreated < safePlayableBefore) {
+					// Our package is older than required, this is playable
+					regionRestrictedUntil = null;
+
+					break;
+				}
+
+				// We've got a package that was activated recently, we should check if we have any playable restrictions on it
+				if ((ASF.GlobalDatabase == null) || !ASF.GlobalDatabase.PackagesDataReadOnly.TryGetValue(packageID, out PackageData? packageData)) {
+					// No information about that package, try again later
+					return (0, DateTime.MaxValue, true);
+				}
+
+				if (((packageData.ProhibitRunInCountries == null) || packageData.ProhibitRunInCountries.IsEmpty) && ((packageData.OnlyAllowRunInCountries == null) || packageData.OnlyAllowRunInCountries.IsEmpty)) {
+					// No restrictions, we're good to go
+					regionRestrictedUntil = null;
+
+					break;
+				}
+
+				if ((packageData.ProhibitRunInCountries?.Contains(IPCountryCode) == true) || (packageData.OnlyAllowRunInCountries is { IsEmpty: false } && !packageData.OnlyAllowRunInCountries.Contains(IPCountryCode))) {
+					// We are restricted by this package, we can only be saved by another package that is not restricted
+					DateTime regionRestrictedUntilPackage = ownedPackageData.TimeCreated.AddMonths(RegionRestrictionPlayableBlockMonths);
+
+					if (!regionRestrictedUntil.HasValue || (regionRestrictedUntilPackage < regionRestrictedUntil.Value)) {
+						regionRestrictedUntil = regionRestrictedUntilPackage;
+					}
+				}
+			}
+
+			if (regionRestrictedUntil.HasValue) {
+				// We can't play this game for now
+				ArchiLogger.LogGenericWarning(Strings.FormatWarningRegionRestrictedPackage(appID, IPCountryCode, regionRestrictedUntil.Value));
+
+				return (0, regionRestrictedUntil.Value, false);
+			}
+		}
+
 		SteamApps.PICSTokensCallback? tokenCallback = null;
 
 		for (byte i = 0; (i < WebBrowser.MaxTries) && (tokenCallback == null) && IsConnectedAndLoggedOn; i++) {
@@ -1067,13 +1196,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return (optimisticDiscovery ? appID : 0, DateTime.MinValue, true);
 		}
 
-		SteamApps.PICSRequest request = new(appID, tokenCallback.AppTokens.TryGetValue(appID, out ulong accessToken) ? accessToken : 0);
+		SteamApps.PICSRequest request = new(appID, tokenCallback.AppTokens.GetValueOrDefault(appID));
 
 		AsyncJobMultiple<SteamApps.PICSProductInfoCallback>.ResultSet? productInfoResultSet = null;
 
 		for (byte i = 0; (i < WebBrowser.MaxTries) && (productInfoResultSet == null) && IsConnectedAndLoggedOn; i++) {
 			try {
-				productInfoResultSet = await SteamApps.PICSGetProductInfo(request.ToEnumerable(), Enumerable.Empty<SteamApps.PICSRequest>()).ToLongRunningTask().ConfigureAwait(false);
+				productInfoResultSet = await SteamApps.PICSGetProductInfo(request.ToEnumerable(), []).ToLongRunningTask().ConfigureAwait(false);
 			} catch (Exception e) {
 				ArchiLogger.LogGenericWarningException(e);
 			}
@@ -1106,14 +1235,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			if (!string.IsNullOrEmpty(releaseState)) {
 				// We must convert this to uppercase, since Valve doesn't stick to any convention and we can have a case mismatch
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				switch (releaseState!.ToUpperInvariant()) {
+				switch (releaseState.ToUpperInvariant()) {
 					case "RELEASED":
 						break;
 					case "PRELOADONLY" or "PRERELEASE":
 						return (0, DateTime.MaxValue, true);
 					default:
-						ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(releaseState), releaseState));
+						ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(releaseState), releaseState));
 
 						break;
 				}
@@ -1126,8 +1254,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			// We must convert this to uppercase, since Valve doesn't stick to any convention and we can have a case mismatch
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			switch (type!.ToUpperInvariant()) {
+			switch (type.ToUpperInvariant()) {
 				case "APPLICATION" or "EPISODE" or "GAME" or "MOD" or "MOVIE" or "SERIES" or "TOOL" or "VIDEO":
 					// Types that can be idled
 					return (appID, DateTime.MinValue, true);
@@ -1135,7 +1262,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					// Types that can't be idled
 					break;
 				default:
-					ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(type), type));
+					ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(type), type));
 
 					break;
 			}
@@ -1150,8 +1277,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				return (appID, DateTime.MinValue, true);
 			}
 
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			string[] dlcAppIDsTexts = listOfDlc!.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+			string[] dlcAppIDsTexts = listOfDlc.Split(SharedInfo.ListElementSeparators, StringSplitOptions.RemoveEmptyEntries);
 
 			foreach (string dlcAppIDsText in dlcAppIDsTexts) {
 				if (!uint.TryParse(dlcAppIDsText, out uint dlcAppID) || (dlcAppID == 0)) {
@@ -1173,6 +1299,18 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return (productInfoResultSet is { Complete: true, Failed: false } || optimisticDiscovery ? appID : 0, DateTime.MinValue, true);
 	}
 
+	internal static Bot? GetDefaultBot() {
+		if ((Bots == null) || Bots.IsEmpty) {
+			return null;
+		}
+
+		if (!string.IsNullOrEmpty(ASF.GlobalConfig?.DefaultBot) && Bots.TryGetValue(ASF.GlobalConfig.DefaultBot, out Bot? targetBot)) {
+			return targetBot;
+		}
+
+		return Bots.AsLinqThreadSafeEnumerable().OrderBy(static bot => bot.Key, BotsComparer).Select(static bot => bot.Value).FirstOrDefault();
+	}
+
 	internal Task<HashSet<uint>?> GetMarketableAppIDs() => ArchiWebHandler.GetAppList();
 
 	internal async Task<Dictionary<uint, PackageData>?> GetPackagesData(IReadOnlyCollection<uint> packageIDs) {
@@ -1184,7 +1322,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new InvalidOperationException(nameof(ASF.GlobalDatabase));
 		}
 
-		HashSet<SteamApps.PICSRequest> packageRequests = new();
+		HashSet<SteamApps.PICSRequest> packageRequests = [];
 
 		foreach (uint packageID in packageIDs) {
 			if (!ASF.GlobalDatabase.PackageAccessTokensReadOnly.TryGetValue(packageID, out ulong packageAccessToken)) {
@@ -1202,7 +1340,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		for (byte i = 0; (i < WebBrowser.MaxTries) && (productInfoResultSet == null) && IsConnectedAndLoggedOn; i++) {
 			try {
-				productInfoResultSet = await SteamApps.PICSGetProductInfo(Enumerable.Empty<SteamApps.PICSRequest>(), packageRequests).ToLongRunningTask().ConfigureAwait(false);
+				productInfoResultSet = await SteamApps.PICSGetProductInfo([], packageRequests).ToLongRunningTask().ConfigureAwait(false);
 			} catch (Exception e) {
 				ArchiLogger.LogGenericWarningException(e);
 			}
@@ -1220,40 +1358,53 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			if (productInfo.KeyValues == KeyValue.Invalid) {
 				ArchiLogger.LogNullError(productInfo);
 
-				return null;
+				continue;
 			}
 
 			uint changeNumber = productInfo.ChangeNumber;
+
 			HashSet<uint>? appIDs = null;
 
-			try {
-				KeyValue appIDsKv = productInfo.KeyValues["appids"];
+			KeyValue appIDsKv = productInfo.KeyValues["appids"];
 
-				if (appIDsKv == KeyValue.Invalid) {
-					continue;
-				}
-
+			if (appIDsKv != KeyValue.Invalid) {
 				appIDs = new HashSet<uint>(appIDsKv.Children.Count);
 
 				foreach (string? appIDText in appIDsKv.Children.Select(static app => app.Value)) {
 					if (!uint.TryParse(appIDText, out uint appID) || (appID == 0)) {
 						ArchiLogger.LogNullError(appID);
 
-						return null;
+						continue;
 					}
 
 					appIDs.Add(appID);
 				}
-			} finally {
-				result[productInfo.ID] = new PackageData(changeNumber, validUntil, appIDs?.ToImmutableHashSet());
 			}
+
+			string[]? onlyAllowRunInCountries = null;
+
+			string? onlyAllowRunInCountriesText = productInfo.KeyValues["extended"]["onlyallowrunincountries"].AsString();
+
+			if (!string.IsNullOrEmpty(onlyAllowRunInCountriesText)) {
+				onlyAllowRunInCountries = onlyAllowRunInCountriesText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			}
+
+			string[]? prohibitRunInCountries = null;
+
+			string? prohibitRunInCountriesText = productInfo.KeyValues["extended"]["prohibitrunincountries"].AsString();
+
+			if (!string.IsNullOrEmpty(prohibitRunInCountriesText)) {
+				prohibitRunInCountries = prohibitRunInCountriesText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+			}
+
+			result[productInfo.ID] = new PackageData(changeNumber, validUntil, appIDs?.ToImmutableHashSet(), onlyAllowRunInCountries?.ToImmutableHashSet(StringComparer.Ordinal), prohibitRunInCountries?.ToImmutableHashSet(StringComparer.Ordinal));
 		}
 
 		return result;
 	}
 
 	internal async Task<(Dictionary<string, string>? UnusedKeys, Dictionary<string, string>? UsedKeys)> GetUsedAndUnusedKeys() {
-		string[] files = { GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed) };
+		string[] files = [GetFilePath(EFileType.KeysToRedeemUnused), GetFilePath(EFileType.KeysToRedeemUsed)];
 
 		IList<Dictionary<string, string>?> results = await Utilities.InParallel(files.Select(GetKeysFromFile)).ConfigureAwait(false);
 
@@ -1282,7 +1433,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		string? gameName = null;
 
 		if (!string.IsNullOrEmpty(BotConfig.CustomGamePlayedWhileFarming)) {
-			gameName = string.Format(CultureInfo.CurrentCulture, BotConfig.CustomGamePlayedWhileFarming!, game.AppID, game.GameName);
+			gameName = string.Format(CultureInfo.CurrentCulture, BotConfig.CustomGamePlayedWhileFarming, game.AppID, game.GameName);
 		}
 
 		await ArchiHandler.PlayGames(new HashSet<uint>(1) { game.PlayableAppID }, gameName).ConfigureAwait(false);
@@ -1296,15 +1447,17 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		string? gameName = null;
 
 		if (!string.IsNullOrEmpty(BotConfig.CustomGamePlayedWhileFarming)) {
-			gameName = string.Format(CultureInfo.CurrentCulture, BotConfig.CustomGamePlayedWhileFarming!, string.Join(", ", games.Select(static game => game.AppID)), string.Join(", ", games.Select(static game => game.GameName)));
+			gameName = string.Format(CultureInfo.CurrentCulture, BotConfig.CustomGamePlayedWhileFarming, string.Join(", ", games.Select(static game => game.AppID)), string.Join(", ", games.Select(static game => game.GameName)));
 		}
 
 		await ArchiHandler.PlayGames(games.Select(static game => game.PlayableAppID).ToHashSet(), gameName).ConfigureAwait(false);
 	}
 
 	internal async Task ImportKeysToRedeem(string filePath) {
-		if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) {
-			throw new ArgumentNullException(nameof(filePath));
+		ArgumentException.ThrowIfNullOrEmpty(filePath);
+
+		if (!File.Exists(filePath)) {
+			throw new FileNotFoundException(nameof(filePath), filePath);
 		}
 
 		try {
@@ -1323,7 +1476,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					string[] parsedArgs = line.Split(DefaultBackgroundKeysRedeemerSeparator, StringSplitOptions.RemoveEmptyEntries);
 
 					if (parsedArgs.Length < 1) {
-						ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, line));
+						ArchiLogger.LogGenericWarning(Strings.FormatErrorIsInvalid(line));
 
 						continue;
 					}
@@ -1349,21 +1502,19 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	internal static void Init(StringComparer botsComparer, IMachineInfoProvider? customMachineInfoProvider = null) {
+	internal static void Init(StringComparer botsComparer) {
+		ArgumentNullException.ThrowIfNull(botsComparer);
+
 		if (Bots != null) {
 			throw new InvalidOperationException(nameof(Bots));
 		}
 
-		BotsComparer = botsComparer ?? throw new ArgumentNullException(nameof(botsComparer));
-
-		CustomMachineInfoProvider = customMachineInfoProvider;
+		BotsComparer = botsComparer;
 		Bots = new ConcurrentDictionary<string, Bot>(botsComparer);
 	}
 
 	internal bool IsBlacklistedFromIdling(uint appID) {
-		if (appID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(appID));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
 		return BotDatabase.FarmingBlacklistAppIDs.Contains(appID);
 	}
@@ -1377,9 +1528,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	internal bool IsPriorityIdling(uint appID) {
-		if (appID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(appID));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
 
 		return BotDatabase.FarmingPriorityQueueAppIDs.Contains(appID);
 	}
@@ -1394,16 +1543,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		string configFile = GetFilePath(EFileType.Config);
 
 		if (string.IsNullOrEmpty(configFile)) {
-			ArchiLogger.LogNullError(configFile);
-
-			return;
+			throw new InvalidOperationException(nameof(configFile));
 		}
 
-		(BotConfig? botConfig, _) = await BotConfig.Load(configFile, BotName).ConfigureAwait(false);
+		(BotConfig? botConfig, _) = await BotConfig.Load(configFile).ConfigureAwait(false);
 
 		if (botConfig == null) {
-			await Destroy().ConfigureAwait(false);
-
+			// Invalid config file, we allow user to fix it without destroying the bot right away
 			return;
 		}
 
@@ -1419,7 +1565,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			// Skip shutdown event as we're actually reinitializing the bot, not fully stopping it
-			Stop(true);
+			await Stop(true).ConfigureAwait(false);
 
 			BotConfig = botConfig;
 
@@ -1433,14 +1579,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	internal async Task OnFarmingFinished(bool farmedSomething) {
 		await OnFarmingStopped().ConfigureAwait(false);
 
-		if (BotConfig is { SendOnFarmingFinished: true, LootableTypes.Count: > 0 } && (farmedSomething || !FirstTradeSent)) {
+		if (BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.SendOnFarmingFinished) && (BotConfig.LootableTypes.Count > 0) && (farmedSomething || !FirstTradeSent)) {
 			FirstTradeSent = true;
 
 			await Actions.SendInventory(filterFunction: item => BotConfig.LootableTypes.Contains(item.Type)).ConfigureAwait(false);
 		}
 
-		if (BotConfig.ShutdownOnFarmingFinished) {
-			Stop();
+		if (BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.ShutdownOnFarmingFinished)) {
+			await Stop().ConfigureAwait(false);
 		}
 
 		await PluginsCore.OnBotFarmingFinished(this, farmedSomething).ConfigureAwait(false);
@@ -1451,41 +1597,86 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await PluginsCore.OnBotFarmingStopped(this).ConfigureAwait(false);
 	}
 
-	internal async Task<bool> RefreshSession() {
+	internal async Task<bool> RefreshWebSession(bool force = false) {
 		if (!IsConnectedAndLoggedOn) {
 			return false;
 		}
 
-		SteamUser.WebAPIUserNonceCallback callback;
+		await RefreshWebSessionSemaphore.WaitAsync().ConfigureAwait(false);
 
 		try {
-			callback = await SteamUser.RequestWebAPIUserNonce().ToLongRunningTask().ConfigureAwait(false);
-		} catch (Exception e) {
-			ArchiLogger.LogGenericWarningException(e);
-			await Connect(true).ConfigureAwait(false);
+			if (!IsConnectedAndLoggedOn) {
+				return false;
+			}
+
+			DateTime minimumValidUntil = DateTime.UtcNow.AddMinutes(MinimumAccessTokenValidityMinutes);
+
+			if (!force && !string.IsNullOrEmpty(AccessToken) && (!AccessTokenValidUntil.HasValue || (AccessTokenValidUntil.Value >= minimumValidUntil))) {
+				// We can use the tokens we already have
+				if (await ArchiWebHandler.Init(SteamID, SteamClient.Universe, AccessToken, SteamParentalActive ? BotConfig.SteamParentalCode : null).ConfigureAwait(false)) {
+					InitRefreshTokensTimer(AccessTokenValidUntil ?? minimumValidUntil);
+
+					return true;
+				}
+			}
+
+			// We need to refresh our session, access token is no longer valid
+			BotDatabase.AccessToken = AccessToken = null;
+
+			if (string.IsNullOrEmpty(RefreshToken)) {
+				// Without refresh token we can't get fresh access tokens, relog needed
+				await Reconnect().ConfigureAwait(false);
+
+				return false;
+			}
+
+			AccessTokenGenerateResult response;
+
+			try {
+				response = await SteamClient.Authentication.GenerateAccessTokenForAppAsync(SteamID, RefreshToken, true).ConfigureAwait(false);
+			} catch (Exception e) {
+				// The request has failed, in almost all cases this means our refresh token is no longer valid, relog needed
+				ArchiLogger.LogGenericWarningException(e);
+
+				BotDatabase.RefreshToken = RefreshToken = null;
+
+				await Reconnect().ConfigureAwait(false);
+
+				return false;
+			}
+
+			if (string.IsNullOrEmpty(response.AccessToken)) {
+				// The request has failed, in almost all cases this means our refresh token is no longer valid, relog needed
+				BotDatabase.RefreshToken = RefreshToken = null;
+
+				ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(SteamClient.Authentication.GenerateAccessTokenForAppAsync)));
+
+				await Reconnect().ConfigureAwait(false);
+
+				return false;
+			}
+
+			UpdateTokens(response.AccessToken, response.RefreshToken);
+
+			if (await ArchiWebHandler.Init(SteamID, SteamClient.Universe, response.AccessToken, SteamParentalActive ? BotConfig.SteamParentalCode : null).ConfigureAwait(false)) {
+				InitRefreshTokensTimer(AccessTokenValidUntil ?? minimumValidUntil);
+
+				return true;
+			}
+
+			// We got the tokens, but failed to authorize? Purge them just to be sure and reconnect
+			BotDatabase.AccessToken = AccessToken = null;
+
+			await Reconnect().ConfigureAwait(false);
 
 			return false;
+		} finally {
+			RefreshWebSessionSemaphore.Release();
 		}
-
-		if (string.IsNullOrEmpty(callback.Nonce)) {
-			await Connect(true).ConfigureAwait(false);
-
-			return false;
-		}
-
-		if (await ArchiWebHandler.Init(SteamID, SteamClient.Universe, callback.Nonce, SteamParentalActive ? BotConfig.SteamParentalCode : null).ConfigureAwait(false)) {
-			return true;
-		}
-
-		await Connect(true).ConfigureAwait(false);
-
-		return false;
 	}
 
 	internal static async Task RegisterBot(string botName) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		if (Bots == null) {
 			throw new InvalidOperationException(nameof(Bots));
@@ -1503,23 +1694,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		(BotConfig? botConfig, string? latestJson) = await BotConfig.Load(configFilePath, botName).ConfigureAwait(false);
+		(BotConfig? botConfig, string? latestJson) = await BotConfig.Load(configFilePath).ConfigureAwait(false);
 
 		if (botConfig == null) {
-			ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorBotConfigInvalid, configFilePath));
+			ASF.ArchiLogger.LogGenericError(Strings.FormatErrorBotConfigInvalid(configFilePath));
 
 			return;
 		}
 
 		if (Debugging.IsDebugConfigured) {
-			ASF.ArchiLogger.LogGenericDebug($"{configFilePath}: {JsonConvert.SerializeObject(botConfig, Formatting.Indented)}");
+			ASF.ArchiLogger.LogGenericDebug($"{configFilePath}: {botConfig.ToJsonText(true)}");
 		}
 
 		if (!string.IsNullOrEmpty(latestJson)) {
-			ASF.ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.AutomaticFileMigration, configFilePath));
+			ASF.ArchiLogger.LogGenericWarning(Strings.FormatAutomaticFileMigration(configFilePath));
 
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			await SerializableFile.Write(configFilePath, latestJson!).ConfigureAwait(false);
+			await SerializableFile.Write(configFilePath, latestJson).ConfigureAwait(false);
 
 			ASF.ArchiLogger.LogGenericInfo(Strings.Done);
 		}
@@ -1535,14 +1725,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		BotDatabase? botDatabase = await BotDatabase.CreateOrLoad(databaseFilePath).ConfigureAwait(false);
 
 		if (botDatabase == null) {
-			ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorDatabaseInvalid, databaseFilePath));
+			ASF.ArchiLogger.LogGenericError(Strings.FormatErrorDatabaseInvalid(databaseFilePath));
 
 			return;
 		}
 
 		if (Debugging.IsDebugConfigured) {
-			ASF.ArchiLogger.LogGenericDebug($"{databaseFilePath}: {JsonConvert.SerializeObject(botDatabase, Formatting.Indented)}");
+			ASF.ArchiLogger.LogGenericDebug($"{databaseFilePath}: {botDatabase.ToJsonText(true)}");
 		}
+
+		botDatabase.PerformMaintenance();
 
 		Bot bot;
 
@@ -1597,9 +1789,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	internal async Task<bool> Rename(string newBotName) {
-		if (string.IsNullOrEmpty(newBotName)) {
-			throw new ArgumentNullException(nameof(newBotName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(newBotName);
 
 		if (Bots == null) {
 			throw new InvalidOperationException(nameof(Bots));
@@ -1610,7 +1800,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		if (KeepRunning) {
-			Stop(true);
+			await Stop(true).ConfigureAwait(false);
 		}
 
 		await BotDatabase.MakeReadOnly().ConfigureAwait(false);
@@ -1620,13 +1810,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			string newFilePath = GetFilePath(newBotName, fileType);
 
 			if (string.IsNullOrEmpty(newFilePath)) {
-				ArchiLogger.LogNullError(newFilePath);
-
-				return false;
+				throw new InvalidOperationException(nameof(newFilePath));
 			}
 
 			try {
+#pragma warning disable CA3003 // New file path derived from bot's name that was validated above
 				File.Move(filePath, newFilePath);
+#pragma warning restore CA3003 // New file path derived from bot's name that was validated above
 			} catch (Exception e) {
 				ArchiLogger.LogGenericException(e);
 
@@ -1635,6 +1825,56 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		return true;
+	}
+
+	internal async Task<string?> RequestInput(ASF.EUserInputType inputType, bool previousCodeWasIncorrect) {
+		if ((inputType == ASF.EUserInputType.None) || !Enum.IsDefined(inputType)) {
+			throw new InvalidEnumArgumentException(nameof(inputType), (int) inputType, typeof(ASF.EUserInputType));
+		}
+
+		switch (inputType) {
+			case ASF.EUserInputType.SteamGuard when !string.IsNullOrEmpty(AuthCode):
+				string? savedAuthCode = AuthCode;
+
+				AuthCode = null;
+
+				return savedAuthCode;
+			case ASF.EUserInputType.TwoFactorAuthentication when !string.IsNullOrEmpty(TwoFactorCode):
+				string? savedTwoFactorCode = TwoFactorCode;
+
+				TwoFactorCode = null;
+
+				return savedTwoFactorCode;
+			case ASF.EUserInputType.TwoFactorAuthentication when BotDatabase.MobileAuthenticator != null:
+				if (previousCodeWasIncorrect) {
+					// There is a possibility that our cached time is no longer appropriate, so we should reset the cache in this case in order to fetch it upon the next login attempt
+					// Yes, this might as well be just invalid 2FA credentials, but we can't be sure about that, and we have LoginFailures designed to verify that for us
+					await MobileAuthenticator.ResetSteamTimeDifference().ConfigureAwait(false);
+				}
+
+				string? generatedTwoFactorCode = await BotDatabase.MobileAuthenticator.GenerateToken().ConfigureAwait(false);
+
+				if (!string.IsNullOrEmpty(generatedTwoFactorCode)) {
+					return generatedTwoFactorCode;
+				}
+
+				break;
+		}
+
+		RequiredInput = inputType;
+
+		string? input = await Logging.GetUserInput(inputType, BotName).ConfigureAwait(false);
+
+		if (string.IsNullOrEmpty(input) || !SetUserInput(inputType, input)) {
+			ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(input)));
+
+			await Stop().ConfigureAwait(false);
+
+			return null;
+		}
+
+		// We keep user input set in case we need to use it again due to disconnection, OnLoggedOn() will reset it for us
+		return input;
 	}
 
 	internal void RequestPersonaStateUpdate() {
@@ -1674,54 +1914,83 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		KeepRunning = true;
-		Utilities.InBackground(HandleCallbacks, true);
-		ArchiLogger.LogGenericInfo(Strings.Starting);
+		await ConnectionSemaphore.WaitAsync().ConfigureAwait(false);
 
-		// Support and convert 2FA files
-		if (!HasMobileAuthenticator) {
-			string mobileAuthenticatorFilePath = GetFilePath(EFileType.MobileAuthenticator);
+		try {
+			if (KeepRunning) {
+				return;
+			}
 
-			if (string.IsNullOrEmpty(mobileAuthenticatorFilePath)) {
-				ArchiLogger.LogNullError(mobileAuthenticatorFilePath);
+			KeepRunning = true;
+
+			ArchiLogger.LogGenericInfo(Strings.Starting);
+
+			// Support and convert 2FA files
+			if (!HasMobileAuthenticator) {
+				string mobileAuthenticatorFilePath = GetFilePath(EFileType.MobileAuthenticator);
+
+				if (string.IsNullOrEmpty(mobileAuthenticatorFilePath)) {
+					ArchiLogger.LogNullError(mobileAuthenticatorFilePath);
+
+					return;
+				}
+
+				if (File.Exists(mobileAuthenticatorFilePath)) {
+					await ImportAuthenticatorFromFile(mobileAuthenticatorFilePath).ConfigureAwait(false);
+				}
+			}
+
+			string keysToRedeemFilePath = GetFilePath(EFileType.KeysToRedeem);
+
+			if (string.IsNullOrEmpty(keysToRedeemFilePath)) {
+				ArchiLogger.LogNullError(keysToRedeemFilePath);
 
 				return;
 			}
 
-			if (File.Exists(mobileAuthenticatorFilePath)) {
-				await ImportAuthenticatorFromFile(mobileAuthenticatorFilePath).ConfigureAwait(false);
+			if (File.Exists(keysToRedeemFilePath)) {
+				await ImportKeysToRedeem(keysToRedeemFilePath).ConfigureAwait(false);
 			}
+
+			// If any previous callbacks handling loop is still going, we're going to abort it
+			await StopHandlingCallbacks().ConfigureAwait(false);
+
+			CallbacksAborted = new CancellationTokenSource();
+
+			CancellationToken token = CallbacksAborted.Token;
+
+			Utilities.InBackground(() => HandleCallbacks(token), true);
+			Utilities.InBackground(Connect);
+		} finally {
+			ConnectionSemaphore.Release();
 		}
-
-		string keysToRedeemFilePath = GetFilePath(EFileType.KeysToRedeem);
-
-		if (string.IsNullOrEmpty(keysToRedeemFilePath)) {
-			ArchiLogger.LogNullError(keysToRedeemFilePath);
-
-			return;
-		}
-
-		if (File.Exists(keysToRedeemFilePath)) {
-			await ImportKeysToRedeem(keysToRedeemFilePath).ConfigureAwait(false);
-		}
-
-		await Connect().ConfigureAwait(false);
 	}
 
-	internal void Stop(bool skipShutdownEvent = false) {
+	internal async Task Stop(bool skipShutdownEvent = false) {
 		if (!KeepRunning) {
 			return;
 		}
 
-		KeepRunning = false;
-		ArchiLogger.LogGenericInfo(Strings.BotStopping);
+		await ConnectionSemaphore.WaitAsync().ConfigureAwait(false);
 
-		if (SteamClient.IsConnected) {
-			Disconnect();
-		}
+		try {
+			if (!KeepRunning) {
+				return;
+			}
 
-		if (!skipShutdownEvent) {
-			Utilities.InBackground(Events.OnBotShutdown);
+			KeepRunning = false;
+
+			ArchiLogger.LogGenericInfo(Strings.BotStopping);
+
+			if (SteamClient.IsConnected) {
+				Disconnect();
+			}
+
+			if (!skipShutdownEvent) {
+				Utilities.InBackground(Events.OnBotShutdown);
+			}
+		} finally {
+			ConnectionSemaphore.Release();
 		}
 	}
 
@@ -1745,53 +2014,28 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentNullException(nameof(gamesToRedeemInBackground));
 		}
 
-		HashSet<object> invalidKeys = new();
+		HashSet<object> invalidKeys = gamesToRedeemInBackground.Cast<DictionaryEntry>().Where(static game => !BotDatabase.IsValidGameToRedeemInBackground(game)).Select(static game => game.Key).ToHashSet();
 
-		foreach (DictionaryEntry game in gamesToRedeemInBackground) {
-			bool invalid = false;
-
-			string? key = game.Key as string;
-
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			if (string.IsNullOrEmpty(key)) {
-				invalid = true;
-				ASF.ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(key)));
-			} else if (!Utilities.IsValidCdKey(key!)) {
-				invalid = true;
-				ASF.ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, key));
-			}
-
-			string? name = game.Value as string;
-
-			if (string.IsNullOrEmpty(name)) {
-				invalid = true;
-				ASF.ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(name)));
-			}
-
-			if (invalid && (key != null)) {
-				invalidKeys.Add(key);
-			}
-		}
-
-		if (invalidKeys.Count > 0) {
-			foreach (string invalidKey in invalidKeys) {
-				gamesToRedeemInBackground.Remove(invalidKey);
-			}
+		foreach (object invalidKey in invalidKeys) {
+			gamesToRedeemInBackground.Remove(invalidKey);
 		}
 
 		return gamesToRedeemInBackground;
 	}
 
-	private async Task Connect(bool force = false) {
-		if (!force && (!KeepRunning || SteamClient.IsConnected)) {
+	private async Task Connect() {
+		if (!KeepRunning || SteamClient.IsConnected) {
 			return;
 		}
 
 		await LimitLoginRequestsAsync().ConfigureAwait(false);
 
-		if (!force && (!KeepRunning || SteamClient.IsConnected)) {
+		if (!KeepRunning || SteamClient.IsConnected) {
 			return;
 		}
+
+		LastLogOnResult = EResult.Invalid;
+		ReconnectOnUserInitiated = false;
 
 		ArchiLogger.LogGenericInfo(Strings.BotConnecting);
 		InitConnectionFailureTimer();
@@ -1805,26 +2049,59 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		if (KeepRunning) {
 			if (!force) {
-				Stop();
+				await Stop().ConfigureAwait(false);
 			} else {
 				// Stop() will most likely block due to connection freeze, don't wait for it
 				Utilities.InBackground(() => Stop());
 			}
 		}
 
+		// Ensure the handling loop is stopped, but allow a few extra seconds for any lost callbacks to trigger
+		CancellationTokenSource? callbacksAborted = CallbacksAborted;
+
+		if (callbacksAborted is { IsCancellationRequested: false }) {
+			Utilities.InBackground(
+				async () => {
+					await Task.Delay(CallbackSleep * WebBrowser.MaxTries, CancellationToken.None).ConfigureAwait(false);
+
+					try {
+						await callbacksAborted.CancelAsync().ConfigureAwait(false);
+					} catch {
+						// Ignored, object already disposed or similar
+					}
+				}
+			);
+		}
+
 		Bots.TryRemove(BotName, out _);
 		await PluginsCore.OnBotDestroy(this).ConfigureAwait(false);
 	}
 
-	private void Disconnect() {
+	private void Disconnect(bool reconnect = false) {
 		StopConnectionFailureTimer();
+
+		LastLogOnResult = EResult.OK;
+		ReconnectOnUserInitiated = reconnect;
+
 		SteamClient.Disconnect();
 	}
 
+	private void DisposeShared() {
+		ArchiHandler.Dispose();
+		ArchiWebHandler.Dispose();
+		BotDatabase.Dispose();
+		ConnectionSemaphore.Dispose();
+		GamesRedeemerInBackgroundSemaphore.Dispose();
+		InitializationSemaphore.Dispose();
+		MessagingSemaphore.Dispose();
+		RefreshWebSessionSemaphore.Dispose();
+		SendCompleteTypesSemaphore.Dispose();
+		Trading.Dispose();
+		UnpackBoosterPacksSemaphore.Dispose();
+	}
+
 	private async Task<Dictionary<string, string>?> GetKeysFromFile(string filePath) {
-		if (string.IsNullOrEmpty(filePath)) {
-			throw new ArgumentNullException(nameof(filePath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
 		if (!File.Exists(filePath)) {
 			return new Dictionary<string, string>(0, StringComparer.Ordinal);
@@ -1843,7 +2120,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				string[] parsedArgs = line.Split(DefaultBackgroundKeysRedeemerSeparator, StringSplitOptions.RemoveEmptyEntries);
 
 				if (parsedArgs.Length < 3) {
-					ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, line));
+					ArchiLogger.LogGenericWarning(Strings.FormatErrorIsInvalid(line));
 
 					continue;
 				}
@@ -1851,7 +2128,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				string key = parsedArgs[^1];
 
 				if (!Utilities.IsValidCdKey(key)) {
-					ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, key));
+					ArchiLogger.LogGenericWarning(Strings.FormatErrorIsInvalid(key));
 
 					continue;
 				}
@@ -1869,9 +2146,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	private async Task<HashSet<uint>?> GetPossiblyCompletedBadgeAppIDs(byte page) {
-		if (page == 0) {
-			throw new ArgumentOutOfRangeException(nameof(page));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(page);
 
 		using IDocument? badgePage = await ArchiWebHandler.GetBadgePage(page).ConfigureAwait(false);
 
@@ -1891,7 +2166,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		// Level 5 is maximum level for card badges according to https://steamcommunity.com/tradingcards/faq
 		IEnumerable<IAttr> linkElements = badgePage.SelectNodes<IAttr>("//a[@class='badge_craft_button']/@href | //div[@class='badges_sheet']/div[contains(@class, 'badge_row') and .//div[@class='badge_info_description']/div[contains(text(), 'Level 5')]]/a[@class='badge_row_overlay']/@href");
 
-		HashSet<uint> result = new();
+		HashSet<uint> result = [];
 
 		foreach (string badgeUri in linkElements.Select(static htmlNode => htmlNode.Value)) {
 			if (string.IsNullOrEmpty(badgeUri)) {
@@ -1901,8 +2176,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 
 			// URIs to foil badges are the same as for normal badges except they end with "?border=1"
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			string appIDText = badgeUri!.Split('?', StringSplitOptions.RemoveEmptyEntries)[0].Split('/', StringSplitOptions.RemoveEmptyEntries)[^1];
+			string appIDText = badgeUri.Split('?', StringSplitOptions.RemoveEmptyEntries)[0].Split('/', StringSplitOptions.RemoveEmptyEntries)[^1];
 
 			if (!uint.TryParse(appIDText, out uint appID) || (appID == 0)) {
 				ArchiLogger.LogNullError(appID);
@@ -1916,25 +2190,127 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		return result;
 	}
 
-	private async Task HandleCallbacks() {
-		if (!await CallbackSemaphore.WaitAsync(CallbackSleep).ConfigureAwait(false)) {
-			if (Debugging.IsUserDebugging) {
-				ArchiLogger.LogGenericDebug(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(CallbackSemaphore)));
+	private async Task HandleCallbacks(CancellationToken cancellationToken = default) {
+		try {
+			// Our objective here is to process the callbacks for as long as it's relevant
+			while (!cancellationToken.IsCancellationRequested) {
+				await CallbackManager.RunWaitCallbackAsync(cancellationToken).ConfigureAwait(false);
 			}
+		} catch (OperationCanceledException) {
+			// Ignored, we were asked to stop processing
+		}
+	}
 
-			return;
+	private async Task HandleLoginResult(EResult result, EResult extendedResult) {
+		if (!Enum.IsDefined(result)) {
+			throw new InvalidEnumArgumentException(nameof(result), (int) result, typeof(EResult));
 		}
 
-		try {
-			TimeSpan timeSpan = TimeSpan.FromMilliseconds(CallbackSleep);
+		if (!Enum.IsDefined(extendedResult)) {
+			throw new InvalidEnumArgumentException(nameof(extendedResult), (int) extendedResult, typeof(EResult));
+		}
 
-			while (KeepRunning || SteamClient.IsConnected) {
-				CallbackManager.RunWaitAllCallbacks(timeSpan);
-			}
-		} catch (Exception e) {
-			ArchiLogger.LogGenericException(e);
-		} finally {
-			CallbackSemaphore.Release();
+		// Keep LastLogOnResult for OnDisconnected()
+		LastLogOnResult = result > EResult.OK ? result : EResult.Invalid;
+
+		HeartBeatFailures = 0;
+		StopConnectionFailureTimer();
+
+		switch (result) {
+			case EResult.AccountDisabled:
+				// Those failures are permanent, we should Stop() the bot if any of those happen
+				ArchiLogger.LogGenericError(Strings.FormatBotUnableToLogin(result, extendedResult));
+
+				await Stop().ConfigureAwait(false);
+
+				break;
+			case EResult.AccessDenied when string.IsNullOrEmpty(RefreshToken) && (++LoginFailures >= MaxLoginFailures):
+			case EResult.InvalidPassword when string.IsNullOrEmpty(RefreshToken) && (++LoginFailures >= MaxLoginFailures):
+				// Likely permanently wrong account credentials
+				LoginFailures = 0;
+
+				ArchiLogger.LogGenericError(Strings.FormatBotInvalidPasswordDuringLogin(MaxLoginFailures));
+
+				await Stop().ConfigureAwait(false);
+
+				break;
+			case EResult.AccountLoginDeniedNeedTwoFactor when HasMobileAuthenticator && (++LoginFailures >= MaxLoginFailures):
+			case EResult.TwoFactorCodeMismatch when HasMobileAuthenticator && (++LoginFailures >= MaxLoginFailures):
+				// Likely permanently wrong 2FA credentials that provide automatic TwoFactorAuthentication input
+				LoginFailures = 0;
+
+				ArchiLogger.LogGenericError(Strings.FormatBotInvalidAuthenticatorDuringLogin(MaxLoginFailures));
+
+				await Stop().ConfigureAwait(false);
+
+				break;
+			case EResult.AccountLoginDeniedNeedTwoFactor when HasMobileAuthenticator:
+			case EResult.TwoFactorCodeMismatch when HasMobileAuthenticator:
+				// Automatic TwoFactorAuthentication input provided
+				ArchiLogger.LogGenericWarning(Strings.FormatBotUnableToLogin(result, extendedResult));
+
+				// There is a possibility that our cached time is no longer appropriate, so we should reset the cache in this case in order to fetch it upon the next login attempt
+				// Yes, this might as well be just invalid 2FA credentials, but we can't be sure about that, and we have LoginFailures designed to verify that for us
+				await MobileAuthenticator.ResetSteamTimeDifference().ConfigureAwait(false);
+
+				break;
+			case EResult.AccountLogonDenied:
+			case EResult.InvalidLoginAuthCode:
+				// SteamGuard input required
+				RequiredInput = ASF.EUserInputType.SteamGuard;
+
+				string? authCode = await Logging.GetUserInput(ASF.EUserInputType.SteamGuard, BotName).ConfigureAwait(false);
+
+				if (string.IsNullOrEmpty(authCode) || !SetUserInput(ASF.EUserInputType.SteamGuard, authCode)) {
+					ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(authCode)));
+
+					await Stop().ConfigureAwait(false);
+				}
+
+				break;
+			case EResult.AccountLoginDeniedNeedTwoFactor:
+			case EResult.TwoFactorCodeMismatch:
+				// TwoFactorAuthentication input required
+				RequiredInput = ASF.EUserInputType.TwoFactorAuthentication;
+
+				string? twoFactorCode = await Logging.GetUserInput(ASF.EUserInputType.TwoFactorAuthentication, BotName).ConfigureAwait(false);
+
+				if (string.IsNullOrEmpty(twoFactorCode) || !SetUserInput(ASF.EUserInputType.TwoFactorAuthentication, twoFactorCode)) {
+					ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(twoFactorCode)));
+
+					await Stop().ConfigureAwait(false);
+				}
+
+				break;
+			case EResult.AccessDenied: // Usually means refresh token is no longer authorized to use, otherwise just try again
+			case EResult.AccountLoginDeniedThrottle: // Rate-limiting
+			case EResult.AlreadyLoggedInElsewhere: // No clue, we might need to handle it differenty but it's so rare it's unknown for now why it happens
+			case EResult.Busy: // No clue, might be some internal gateway timeout, just try again
+			case EResult.DuplicateRequest: // This will happen if user reacts to popup and tries to use the code afterwards, we have the code saved in ASF, we just need to try again
+			case EResult.Expired: // Usually means refresh token is no longer authorized to use, otherwise just try again
+			case EResult.FileNotFound: // User denied approval despite telling us that they accepted it, just try again
+			case EResult.InvalidPassword: // Usually means refresh token is no longer authorized to use, otherwise just try again
+			case EResult.NoConnection: // Usually network issues
+			case EResult.PasswordRequiredToKickSession: // Not sure about this one, it seems to be just generic "try again"? #694
+			case EResult.RateLimitExceeded: // Rate-limiting
+			case EResult.ServiceUnavailable: // Usually Steam maintenance
+			case EResult.Timeout: // Usually network issues
+			case EResult.TryAnotherCM: // Usually Steam maintenance
+				// Generic retry pattern against common/expected problems
+				ArchiLogger.LogGenericWarning(Strings.FormatBotUnableToLogin(result, extendedResult));
+
+				break;
+			case EResult.OK:
+				// Login succeeded
+				break;
+			default:
+				// Unexpected result, shutdown immediately
+				ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(result), result));
+				ArchiLogger.LogGenericError(Strings.FormatBotUnableToLogin(result, extendedResult));
+
+				await Stop().ConfigureAwait(false);
+
+				break;
 		}
 	}
 
@@ -1961,7 +2337,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			if (++HeartBeatFailures >= (byte) Math.Ceiling(connectionTimeout / 10.0)) {
 				HeartBeatFailures = byte.MaxValue;
 				ArchiLogger.LogGenericWarning(Strings.BotConnectionLost);
-				Utilities.InBackground(() => Connect(true));
+
+				Utilities.InBackground(Reconnect);
 			}
 		}
 	}
@@ -1977,12 +2354,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			string json = await File.ReadAllTextAsync(maFilePath).ConfigureAwait(false);
 
 			if (string.IsNullOrEmpty(json)) {
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(json)));
+				ArchiLogger.LogGenericError(Strings.FormatErrorIsEmpty(nameof(json)));
 
 				return;
 			}
 
-			MobileAuthenticator? authenticator = JsonConvert.DeserializeObject<MobileAuthenticator>(json);
+			MobileAuthenticator? authenticator = json.ToJsonObject<MobileAuthenticator>();
 
 			if (authenticator == null) {
 				ArchiLogger.LogNullError(authenticator);
@@ -2016,13 +2393,25 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	}
 
 	private async Task InitializeFamilySharing() {
-		HashSet<ulong>? steamIDs = await ArchiWebHandler.GetFamilySharingSteamIDs().ConfigureAwait(false);
+		// TODO: Old call should be removed eventually when Steam stops supporting both systems at once
+		Task<HashSet<ulong>?> oldFamilySharingSteamIDsTask = ArchiWebHandler.GetFamilySharingSteamIDs();
 
-		if (steamIDs == null) {
+		HashSet<ulong>? steamIDs = await ArchiHandler.GetFamilyGroupSteamIDs().ConfigureAwait(false);
+		HashSet<ulong>? oldSteamIDs = await oldFamilySharingSteamIDsTask.ConfigureAwait(false);
+
+		if ((steamIDs == null) && (oldSteamIDs == null)) {
 			return;
 		}
 
-		SteamFamilySharingIDs.ReplaceWith(steamIDs);
+		SteamFamilySharingIDs.Clear();
+
+		if (steamIDs is { Count: > 0 }) {
+			SteamFamilySharingIDs.UnionWith(steamIDs);
+		}
+
+		if (oldSteamIDs is { Count: > 0 }) {
+			SteamFamilySharingIDs.UnionWith(oldSteamIDs);
+		}
 	}
 
 	private async Task<bool> InitLoginAndPassword(bool requiresPassword) {
@@ -2031,9 +2420,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 			string? steamLogin = await Logging.GetUserInput(ASF.EUserInputType.Login, BotName).ConfigureAwait(false);
 
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			if (string.IsNullOrEmpty(steamLogin) || !SetUserInput(ASF.EUserInputType.Login, steamLogin!)) {
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(steamLogin)));
+			if (string.IsNullOrEmpty(steamLogin) || !SetUserInput(ASF.EUserInputType.Login, steamLogin)) {
+				ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(steamLogin)));
 
 				return false;
 			}
@@ -2047,9 +2435,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				string? steamPassword = await Logging.GetUserInput(ASF.EUserInputType.Password, BotName).ConfigureAwait(false);
 
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				if (string.IsNullOrEmpty(steamPassword) || !SetUserInput(ASF.EUserInputType.Password, steamPassword!)) {
-					ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(steamPassword)));
+				if (string.IsNullOrEmpty(steamPassword) || !SetUserInput(ASF.EUserInputType.Password, steamPassword)) {
+					ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(steamPassword)));
 
 					return false;
 				}
@@ -2065,18 +2452,49 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		AccountFlags = EAccountFlags.NormalUser;
-		AvatarHash = Nickname = null;
+		AvatarHash = IPCountryCode = Nickname = null;
 		MasterChatGroupID = 0;
 		RequiredInput = ASF.EUserInputType.None;
 		WalletBalance = 0;
 		WalletCurrency = ECurrencyCode.Invalid;
 
-		CardsFarmer.SetInitialState(BotConfig.Paused);
+		string? accessTokenText = BotDatabase.AccessToken;
+		string? refreshTokenText = BotDatabase.RefreshToken;
+
+		if (BotConfig.PasswordFormat.HasTransformation()) {
+			if (!string.IsNullOrEmpty(accessTokenText)) {
+				accessTokenText = await ArchiCryptoHelper.Decrypt(BotConfig.PasswordFormat, accessTokenText).ConfigureAwait(false);
+			}
+
+			if (!string.IsNullOrEmpty(refreshTokenText)) {
+				refreshTokenText = await ArchiCryptoHelper.Decrypt(BotConfig.PasswordFormat, refreshTokenText).ConfigureAwait(false);
+			}
+		}
+
+		if (!string.IsNullOrEmpty(accessTokenText) && Utilities.TryReadJsonWebToken(accessTokenText, out JsonWebToken? accessToken) && ((accessToken.ValidTo == DateTime.MinValue) || (accessToken.ValidTo >= DateTime.UtcNow))) {
+			AccessToken = accessTokenText;
+		} else {
+			AccessToken = null;
+		}
+
+		if (!string.IsNullOrEmpty(refreshTokenText) && Utilities.TryReadJsonWebToken(refreshTokenText, out JsonWebToken? refreshToken) && ((refreshToken.ValidTo == DateTime.MinValue) || (refreshToken.ValidTo >= DateTime.UtcNow))) {
+			RefreshToken = refreshTokenText;
+		} else {
+			RefreshToken = null;
+		}
+
+		CardsFarmer.SetInitialState(BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.FarmingPausedByDefault));
 
 		if (SendItemsTimer != null) {
 			await SendItemsTimer.DisposeAsync().ConfigureAwait(false);
 
 			SendItemsTimer = null;
+		}
+
+		if (TradeCheckTimer != null) {
+			await TradeCheckTimer.DisposeAsync().ConfigureAwait(false);
+
+			TradeCheckTimer = null;
 		}
 
 		if (BotConfig is { SendTradePeriod: > 0, LootableTypes.Count: > 0 } && BotConfig.SteamUserPermissions.Values.Any(static permission => permission >= BotConfig.EAccess.Master)) {
@@ -2088,15 +2506,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			);
 		}
 
-		if (SteamSaleEvent != null) {
-			await SteamSaleEvent.DisposeAsync().ConfigureAwait(false);
-
-			SteamSaleEvent = null;
+		if (BotConfig.TradeCheckPeriod > 0) {
+			TradeCheckTimer = new Timer(
+				OnTradeCheckTimer,
+				null,
+				TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod) + TimeSpan.FromSeconds(ASF.LoadBalancingDelay * Bots.Count), // Delay
+				TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod) // Period
+			);
 		}
 
-		if (BotConfig.AutoSteamSaleEvent) {
-			SteamSaleEvent = new SteamSaleEvent(this);
-		}
+		BotDatabase.MobileAuthenticator?.OnInitModules();
 
 		await PluginsCore.OnBotInitModules(this, BotConfig.AdditionalProperties).ConfigureAwait(false);
 	}
@@ -2126,6 +2545,40 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		);
 	}
 
+	private void InitRefreshTokensTimer(DateTime validUntil) {
+		ArgumentOutOfRangeException.ThrowIfEqual(validUntil, DateTime.MinValue);
+
+		if (validUntil == DateTime.MaxValue) {
+			// OK, tokens do not require refreshing
+			StopRefreshTokensTimer();
+
+			return;
+		}
+
+		TimeSpan delay = validUntil - DateTime.UtcNow;
+
+		// Start refreshing token before it's invalid
+		if (delay.TotalMinutes > MinimumAccessTokenValidityMinutes) {
+			delay -= TimeSpan.FromMinutes(MinimumAccessTokenValidityMinutes);
+		} else {
+			delay = TimeSpan.Zero;
+		}
+
+		// Timer can accept only dueTimes up to 2^32 - 2
+		uint dueTime = (uint) Math.Min(uint.MaxValue - 1, (ulong) delay.TotalMilliseconds);
+
+		if (RefreshTokensTimer == null) {
+			RefreshTokensTimer = new Timer(
+				OnRefreshTokensTimer,
+				null,
+				TimeSpan.FromMilliseconds(dueTime), // Delay
+				TimeSpan.FromMinutes(1) // Period
+			);
+		} else {
+			RefreshTokensTimer.Change(TimeSpan.FromMilliseconds(dueTime), TimeSpan.FromMinutes(1));
+		}
+	}
+
 	private void InitStart() {
 		if (!BotConfig.Enabled) {
 			ArchiLogger.LogGenericWarning(Strings.BotInstanceNotStartingBecauseDisabled);
@@ -2147,14 +2600,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 	private static bool IsRefundable(EPaymentMethod paymentMethod) {
 		if (paymentMethod == EPaymentMethod.None) {
-			throw new ArgumentNullException(nameof(paymentMethod));
+			throw new ArgumentOutOfRangeException(nameof(paymentMethod));
 		}
 
 #pragma warning disable CA2248 // This is actually a fair warning, EPaymentMethod is not a flags enum on itself, but there is nothing we can do about Steam using it like that here
 		return paymentMethod switch {
 			EPaymentMethod.ActivationCode => false,
 			EPaymentMethod.Complimentary => false,
-			EPaymentMethod.GuestPass => false,
 			EPaymentMethod.HardwarePromo => false,
 			_ => !paymentMethod.HasFlag(EPaymentMethod.Complimentary) // Complimentary can also be a flag
 		};
@@ -2167,13 +2619,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		if (MasterChatGroupID == 0) {
-			ulong chatGroupID = await ArchiHandler.GetClanChatGroupID(BotConfig.SteamMasterClanID).ConfigureAwait(false);
+			CClanChatRooms_GetClanChatRoomInfo_Response? clanChatRoomInfo = await ArchiHandler.GetClanChatRoomInfo(BotConfig.SteamMasterClanID).ConfigureAwait(false);
 
-			if (chatGroupID == 0) {
+			if ((clanChatRoomInfo == null) || (clanChatRoomInfo.chat_group_summary.chat_group_id == 0)) {
 				return;
 			}
 
-			MasterChatGroupID = chatGroupID;
+			MasterChatGroupID = clanChatRoomInfo.chat_group_summary.chat_group_id;
 		}
 
 		HashSet<ulong>? chatGroupIDs = await ArchiHandler.GetMyChatGroupIDs().ConfigureAwait(false);
@@ -2183,7 +2635,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		if (!await ArchiHandler.JoinChatRoomGroup(MasterChatGroupID).ConfigureAwait(false)) {
-			ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ArchiHandler.JoinChatRoomGroup)));
+			ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.JoinChatRoomGroup)));
 		}
 	}
 
@@ -2240,48 +2692,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		string sentryFilePath = GetFilePath(EFileType.SentryFile);
-
-		if (string.IsNullOrEmpty(sentryFilePath)) {
-			ArchiLogger.LogNullError(sentryFilePath);
-
-			return;
-		}
-
-		byte[]? sentryFileHash = null;
-
-		if (File.Exists(sentryFilePath)) {
-			try {
-				byte[] sentryFileContent = await File.ReadAllBytesAsync(sentryFilePath).ConfigureAwait(false);
-				sentryFileHash = CryptoHelper.SHAHash(sentryFileContent);
-			} catch (Exception e) {
-				ArchiLogger.LogGenericException(e);
-
-				try {
-					File.Delete(sentryFilePath);
-				} catch {
-					// Ignored, we can only try to delete faulted file at best
-				}
-			}
-		}
-
-		string? loginKey = null;
-
-		if (ShouldUseLoginKeys && string.IsNullOrEmpty(AuthCode) && string.IsNullOrEmpty(TwoFactorCode)) {
-			loginKey = BotDatabase.LoginKey;
-
-			// Decrypt login key if needed
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			if (!string.IsNullOrEmpty(loginKey) && (loginKey!.Length > 19) && BotConfig.PasswordFormat.HasTransformation()) {
-				loginKey = await ArchiCryptoHelper.Decrypt(BotConfig.PasswordFormat, loginKey).ConfigureAwait(false);
-			}
-		} else {
-			// If we're not using login keys, ensure we don't have any saved
-			BotDatabase.LoginKey = null;
-		}
-
-		if (!await InitLoginAndPassword(string.IsNullOrEmpty(loginKey)).ConfigureAwait(false)) {
-			Stop();
+		if (!await InitLoginAndPassword(string.IsNullOrEmpty(RefreshToken)).ConfigureAwait(false)) {
+			await Stop().ConfigureAwait(false);
 
 			return;
 		}
@@ -2291,12 +2703,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		// Steam login and password fields can contain ASCII characters only, including spaces
-		string username = GeneratedRegexes.NonAscii().Replace(BotConfig.SteamLogin!, "");
+		string username = GeneratedRegexes.NonAscii().Replace(BotConfig.SteamLogin, "");
 
 		if (string.IsNullOrEmpty(username)) {
-			ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(BotConfig.SteamLogin)));
+			ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(BotConfig.SteamLogin)));
 
-			Stop();
+			await Stop().ConfigureAwait(false);
 
 			return;
 		}
@@ -2304,36 +2716,99 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		string? password = await BotConfig.GetDecryptedSteamPassword().ConfigureAwait(false);
 
 		if (!string.IsNullOrEmpty(password)) {
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			password = GeneratedRegexes.NonAscii().Replace(password!, "");
+			password = GeneratedRegexes.NonAscii().Replace(password, "");
 
 			if (string.IsNullOrEmpty(password)) {
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(BotConfig.SteamPassword)));
+				ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(BotConfig.SteamPassword)));
 
-				Stop();
+				await Stop().ConfigureAwait(false);
 
 				return;
 			}
+
+			// Steam artificially cuts passwords to first 64 characters
+			if (password.Length > 64) {
+				password = password[..64];
+			}
+		}
+
+		if (!SteamClient.IsConnected) {
+			// Possible if user spent too much time entering password, try again after reconnect
+			return;
 		}
 
 		ArchiLogger.LogGenericInfo(Strings.BotLoggingIn);
 
-		if (string.IsNullOrEmpty(TwoFactorCode) && (BotDatabase.MobileAuthenticator != null)) {
-			// We should always include 2FA token, even if it's not required
-			TwoFactorCode = await BotDatabase.MobileAuthenticator.GenerateToken().ConfigureAwait(false);
-		}
-
 		InitConnectionFailureTimer();
 
+		if (string.IsNullOrEmpty(RefreshToken)) {
+			AuthPollResult pollResult;
+
+			try {
+				using CancellationTokenSource authCancellationTokenSource = new();
+
+				CredentialsAuthSession authSession = await SteamClient.Authentication.BeginAuthSessionViaCredentialsAsync(
+					new AuthSessionDetails {
+						Authenticator = new BotCredentialsProvider(this, authCancellationTokenSource),
+						DeviceFriendlyName = SharedInfo.PublicIdentifier,
+						GuardData = BotConfig.UseLoginKeys ? BotDatabase.SteamGuardData : null,
+						IsPersistentSession = true,
+						Password = password,
+						Username = username
+					}
+				).ConfigureAwait(false);
+
+				pollResult = await authSession.PollingWaitForResultAsync(authCancellationTokenSource.Token).ConfigureAwait(false);
+			} catch (AuthenticationException e) {
+				ArchiLogger.LogGenericWarningException(e);
+
+				await HandleLoginResult(e.Result, e.Result).ConfigureAwait(false);
+
+				ReconnectOnUserInitiated = true;
+				SteamClient.Disconnect();
+
+				return;
+			} catch (OperationCanceledException) {
+				// This is okay, we already took care of that and can ignore it here
+				return;
+			}
+
+			if (!string.IsNullOrEmpty(pollResult.NewGuardData) && BotConfig.UseLoginKeys) {
+				BotDatabase.SteamGuardData = pollResult.NewGuardData;
+			}
+
+			if (string.IsNullOrEmpty(pollResult.AccessToken)) {
+				// The fuck is this?
+				ArchiLogger.LogNullError(pollResult.AccessToken);
+
+				ReconnectOnUserInitiated = true;
+				SteamClient.Disconnect();
+
+				return;
+			}
+
+			if (string.IsNullOrEmpty(pollResult.RefreshToken)) {
+				// The fuck is that?
+				ArchiLogger.LogNullError(pollResult.RefreshToken);
+
+				ReconnectOnUserInitiated = true;
+				SteamClient.Disconnect();
+
+				return;
+			}
+
+			UpdateTokens(pollResult.AccessToken, pollResult.RefreshToken);
+		}
+
 		SteamUser.LogOnDetails logOnDetails = new() {
-			AuthCode = AuthCode,
+			AccessToken = RefreshToken,
 			CellID = ASF.GlobalDatabase?.CellID,
+			ChatMode = SteamUser.ChatMode.NewSteamChat,
+			ClientLanguage = CultureInfo.CurrentCulture.ToSteamClientLanguage(),
+			IsSteamDeck = BotConfig.OnlinePreferences.HasFlag(BotConfig.EOnlinePreferences.IsSteamDeck),
 			LoginID = LoginID,
-			LoginKey = loginKey,
-			Password = password,
-			SentryFileHash = sentryFileHash,
-			ShouldRememberPassword = ShouldUseLoginKeys,
-			TwoFactorCode = TwoFactorCode,
+			ShouldRememberPassword = BotConfig.UseLoginKeys,
+			UIMode = BotConfig.UserInterfaceMode,
 			Username = username
 		};
 
@@ -2351,11 +2826,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new InvalidOperationException(nameof(ASF.LoginRateLimitingSemaphore));
 		}
 
-		EResult lastLogOnResult = LastLogOnResult;
-		LastLogOnResult = EResult.Invalid;
 		HeartBeatFailures = 0;
 		StopConnectionFailureTimer();
 		StopPlayingWasBlockedTimer();
+		StopRefreshTokensTimer();
 
 		ArchiLogger.LogGenericInfo(Strings.BotDisconnected);
 
@@ -2367,27 +2841,45 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		Trading.OnDisconnected();
 
 		FirstTradeSent = false;
-		OwnedPackageIDs = ImmutableDictionary<uint, (EPaymentMethod PaymentMethod, DateTime TimeCreated)>.Empty;
+		OwnedPackages = FrozenDictionary<uint, LicenseData>.Empty;
 
-		await PluginsCore.OnBotDisconnected(this, callback.UserInitiated ? EResult.OK : lastLogOnResult).ConfigureAwait(false);
+		EResult lastLogOnResult = LastLogOnResult;
+
+		for (byte i = 0; (i < WebBrowser.MaxTries) && (lastLogOnResult == EResult.Invalid); i++) {
+			await Task.Delay(200).ConfigureAwait(false);
+
+			lastLogOnResult = LastLogOnResult;
+		}
+
+		LastLogOnResult = EResult.Invalid;
+
+		await PluginsCore.OnBotDisconnected(this, lastLogOnResult).ConfigureAwait(false);
 
 		// If we initiated disconnect, do not attempt to reconnect
 		if (callback.UserInitiated && !ReconnectOnUserInitiated) {
+			await StopHandlingCallbacksIfPossible().ConfigureAwait(false);
+
 			return;
 		}
 
 		switch (lastLogOnResult) {
 			case EResult.AccountDisabled:
 				// Do not attempt to reconnect, those failures are permanent
+				await StopHandlingCallbacksIfPossible().ConfigureAwait(false);
+
 				return;
-			case EResult.InvalidPassword when !string.IsNullOrEmpty(BotDatabase.LoginKey):
+			case EResult.AccessDenied when !string.IsNullOrEmpty(RefreshToken):
+			case EResult.Expired when !string.IsNullOrEmpty(RefreshToken):
+			case EResult.InvalidPassword when !string.IsNullOrEmpty(RefreshToken):
 				// We can retry immediately
-				BotDatabase.LoginKey = null;
+				BotDatabase.RefreshToken = RefreshToken = null;
 				ArchiLogger.LogGenericInfo(Strings.BotRemovedExpiredLoginKey);
 
 				break;
+			case EResult.AccessDenied:
+			case EResult.AccountLoginDeniedThrottle:
 			case EResult.RateLimitExceeded:
-				ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.BotRateLimitExceeded, TimeSpan.FromMinutes(LoginCooldownInMinutes).ToHumanReadable()));
+				ArchiLogger.LogGenericInfo(Strings.FormatBotRateLimitExceeded(TimeSpan.FromMinutes(LoginCooldownInMinutes).ToHumanReadable()));
 
 				if (!await ASF.LoginRateLimitingSemaphore.WaitAsync(1000 * WebBrowser.MaxTries).ConfigureAwait(false)) {
 					break;
@@ -2407,12 +2899,34 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				break;
 		}
 
-		if (!KeepRunning || SteamClient.IsConnected) {
+		if (!KeepRunning) {
+			await StopHandlingCallbacksIfPossible().ConfigureAwait(false);
+
 			return;
 		}
 
+		if (SteamClient.IsConnected) {
+			return;
+		}
+
+		// Wait with reconnection until we're done with the prompt, not earlier
+		while (RequiredInput != ASF.EUserInputType.None) {
+			await Task.Delay(1000).ConfigureAwait(false);
+
+			if (!KeepRunning) {
+				await StopHandlingCallbacksIfPossible().ConfigureAwait(false);
+
+				return;
+			}
+
+			if (SteamClient.IsConnected) {
+				return;
+			}
+		}
+
 		ArchiLogger.LogGenericInfo(Strings.BotReconnecting);
-		await Connect().ConfigureAwait(false);
+
+		await Reconnect().ConfigureAwait(false);
 	}
 
 	private async void OnFriendsList(SteamFriends.FriendsListCallback callback) {
@@ -2456,7 +2970,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						ArchiLogger.LogInvite(friend.SteamID, true);
 
 						if (!await ArchiHandler.AddFriend(friend.SteamID).ConfigureAwait(false)) {
-							ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ArchiHandler.AddFriend)));
+							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
 						}
 
 						break;
@@ -2468,7 +2982,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						ArchiLogger.LogInvite(friend.SteamID, true);
 
 						if (!await ArchiHandler.AddFriend(friend.SteamID).ConfigureAwait(false)) {
-							ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ArchiHandler.AddFriend)));
+							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.AddFriend)));
 						}
 
 						break;
@@ -2478,7 +2992,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 						ArchiLogger.LogInvite(friend.SteamID, false);
 
 						if (!await ArchiHandler.RemoveFriend(friend.SteamID).ConfigureAwait(false)) {
-							ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ArchiHandler.RemoveFriend)));
+							ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiHandler.RemoveFriend)));
 						}
 
 						break;
@@ -2508,100 +3022,100 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await Actions.AcceptGuestPasses(guestPassIDs).ConfigureAwait(false);
 	}
 
-	private async Task OnIncomingChatMessage(CChatRoom_IncomingChatMessage_Notification notification) {
+	private async void OnIncomingChatMessage(SteamUnifiedMessages.ServiceMethodNotification<CChatRoom_IncomingChatMessage_Notification> notification) {
 		ArgumentNullException.ThrowIfNull(notification);
 
-		if (notification.chat_group_id == 0) {
-			ArchiLogger.LogNullError(notification.chat_group_id);
+		if (notification.Body.chat_group_id == 0) {
+			ArchiLogger.LogNullError(notification.Body.chat_group_id);
 
 			return;
 		}
 
-		if (notification.chat_id == 0) {
-			ArchiLogger.LogNullError(notification.chat_id);
+		if (notification.Body.chat_id == 0) {
+			ArchiLogger.LogNullError(notification.Body.chat_id);
 
 			return;
 		}
 
-		if (notification.steamid_sender == 0) {
-			ArchiLogger.LogNullError(notification.steamid_sender);
+		if (notification.Body.steamid_sender == 0) {
+			ArchiLogger.LogNullError(notification.Body.steamid_sender);
 
 			return;
 		}
 
 		// Under normal circumstances, timestamp must always be greater than 0, but Steam already proved that it's capable of going against the logic
-		if ((notification.steamid_sender != SteamID) && (notification.timestamp > 0)) {
-			if (ShouldAckChatMessage(notification.steamid_sender)) {
-				Utilities.InBackground(() => ArchiHandler.AckChatMessage(notification.chat_group_id, notification.chat_id, notification.timestamp));
+		if ((notification.Body.steamid_sender != SteamID) && (notification.Body.timestamp > 0)) {
+			if (ShouldAckChatMessage(notification.Body.steamid_sender)) {
+				Utilities.InBackground(() => ArchiHandler.AckChatMessage(notification.Body.chat_group_id, notification.Body.chat_id, notification.Body.timestamp));
 			}
 		}
 
 		string message;
 
 		// Prefer to use message without bbcode, but only if it's available
-		if (!string.IsNullOrEmpty(notification.message_no_bbcode)) {
-			message = notification.message_no_bbcode;
-		} else if (!string.IsNullOrEmpty(notification.message)) {
-			message = SteamChatMessage.Unescape(notification.message);
+		if (!string.IsNullOrEmpty(notification.Body.message_no_bbcode)) {
+			message = notification.Body.message_no_bbcode;
+		} else if (!string.IsNullOrEmpty(notification.Body.message)) {
+			message = SteamChatMessage.Unescape(notification.Body.message);
 		} else {
 			return;
 		}
 
-		ArchiLogger.LogChatMessage(false, message, notification.chat_group_id, notification.chat_id, notification.steamid_sender);
+		ArchiLogger.LogChatMessage(false, message, notification.Body.chat_group_id, notification.Body.chat_id, notification.Body.steamid_sender);
 
 		// Steam network broadcasts chat events also when we don't explicitly sign into Steam community
 		// We'll explicitly ignore those messages when using offline mode, as it was done in the first version of Steam chat when no messages were broadcasted at all before signing in
 		// Handling messages will still work correctly in invisible mode, which is how it should work in the first place
 		// This goes in addition to usual logic that ignores irrelevant messages from being parsed further
-		if ((notification.chat_group_id != MasterChatGroupID) || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
+		if ((notification.Body.chat_group_id != MasterChatGroupID) || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
 			return;
 		}
 
-		await Commands.HandleMessage(notification.chat_group_id, notification.chat_id, notification.steamid_sender, message).ConfigureAwait(false);
+		await Commands.HandleMessage(notification.Body.chat_group_id, notification.Body.chat_id, notification.Body.steamid_sender, message).ConfigureAwait(false);
 	}
 
-	private async Task OnIncomingMessage(CFriendMessages_IncomingMessage_Notification notification) {
+	private async void OnIncomingMessage(SteamUnifiedMessages.ServiceMethodNotification<CFriendMessages_IncomingMessage_Notification> notification) {
 		ArgumentNullException.ThrowIfNull(notification);
 
-		if (notification.steamid_friend == 0) {
-			ArchiLogger.LogNullError(notification.steamid_friend);
+		if (notification.Body.steamid_friend == 0) {
+			ArchiLogger.LogNullError(notification.Body.steamid_friend);
 
 			return;
 		}
 
-		if ((EChatEntryType) notification.chat_entry_type != EChatEntryType.ChatMsg) {
+		if ((EChatEntryType) notification.Body.chat_entry_type != EChatEntryType.ChatMsg) {
 			return;
 		}
 
 		// Under normal circumstances, timestamp must always be greater than 0, but Steam already proved that it's capable of going against the logic
-		if (notification is { local_echo: false, rtime32_server_timestamp: > 0 }) {
-			if (ShouldAckChatMessage(notification.steamid_friend)) {
-				Utilities.InBackground(() => ArchiHandler.AckMessage(notification.steamid_friend, notification.rtime32_server_timestamp));
+		if (notification.Body is { local_echo: false, rtime32_server_timestamp: > 0 }) {
+			if (ShouldAckChatMessage(notification.Body.steamid_friend)) {
+				Utilities.InBackground(() => ArchiHandler.AckMessage(notification.Body.steamid_friend, notification.Body.rtime32_server_timestamp));
 			}
 		}
 
 		string message;
 
 		// Prefer to use message without bbcode, but only if it's available
-		if (!string.IsNullOrEmpty(notification.message_no_bbcode)) {
-			message = notification.message_no_bbcode;
-		} else if (!string.IsNullOrEmpty(notification.message)) {
-			message = SteamChatMessage.Unescape(notification.message);
+		if (!string.IsNullOrEmpty(notification.Body.message_no_bbcode)) {
+			message = notification.Body.message_no_bbcode;
+		} else if (!string.IsNullOrEmpty(notification.Body.message)) {
+			message = SteamChatMessage.Unescape(notification.Body.message);
 		} else {
 			return;
 		}
 
-		ArchiLogger.LogChatMessage(notification.local_echo, message, steamID: notification.steamid_friend);
+		ArchiLogger.LogChatMessage(notification.Body.local_echo, message, steamID: notification.Body.steamid_friend);
 
 		// Steam network broadcasts chat events also when we don't explicitly sign into Steam community
 		// We'll explicitly ignore those messages when using offline mode, as it was done in the first version of Steam chat when no messages were broadcasted at all before signing in
 		// Handling messages will still work correctly in invisible mode, which is how it should work in the first place
 		// This goes in addition to usual logic that ignores irrelevant messages from being parsed further
-		if (notification.local_echo || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
+		if (notification.Body.local_echo || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
 			return;
 		}
 
-		await Commands.HandleMessage(notification.steamid_friend, message).ConfigureAwait(false);
+		await Commands.HandleMessage(notification.Body.steamid_friend, message).ConfigureAwait(false);
 	}
 
 	private void OnInventoryChanged() {
@@ -2611,7 +3125,21 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			Utilities.InBackground(ArchiWebHandler.MarkInventory);
 		}
 
-		if (BotConfig.CompleteTypesToSend.Count > 0) {
+		// The following actions should be synchronized, as they modify the state of the inventory
+		if (BotConfig.FarmingPreferences.HasFlag(BotConfig.EFarmingPreferences.AutoUnpackBoosterPacks)) {
+			Utilities.InBackground(
+				async () => {
+					if (!await UnpackBoosterPacks().ConfigureAwait(false)) {
+						// Another task is already in progress, so it'll handle the actions below as well
+						return;
+					}
+
+					if (BotConfig.CompleteTypesToSend.Count > 0) {
+						await SendCompletedSets().ConfigureAwait(false);
+					}
+				}
+			);
+		} else if (BotConfig.CompleteTypesToSend.Count > 0) {
 			Utilities.InBackground(SendCompletedSets);
 		}
 	}
@@ -2625,7 +3153,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 
 		if (callback.LicenseList.Count == 0) {
-			ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(callback.LicenseList)));
+			ArchiLogger.LogGenericError(Strings.FormatErrorIsEmpty(nameof(callback.LicenseList)));
 
 			return;
 		}
@@ -2637,17 +3165,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		Commands.OnNewLicenseList();
 
-		Dictionary<uint, (EPaymentMethod PaymentMethod, DateTime TimeCreated)> ownedPackageIDs = new();
+		Dictionary<uint, LicenseData> ownedPackages = new();
 
 		Dictionary<uint, ulong> packageAccessTokens = new();
 		Dictionary<uint, uint> packagesToRefresh = new();
 
 		bool hasNewEntries = false;
 
-		foreach (SteamApps.LicenseListCallback.License license in callback.LicenseList.GroupBy(static license => license.PackageID, static (_, licenses) => licenses.OrderByDescending(static license => license.TimeCreated).First())) {
-			ownedPackageIDs[license.PackageID] = (license.PaymentMethod, license.TimeCreated);
+		// We want to record only the most relevant entry from non-borrowed games, therefore we also apply ordering here
+		foreach (SteamApps.LicenseListCallback.License license in callback.LicenseList.Where(static license => !license.LicenseFlags.HasFlag(ELicenseFlags.Borrowed)).OrderByDescending(static license => license.TimeCreated).Where(license => !ownedPackages.ContainsKey(license.PackageID))) {
+			ownedPackages[license.PackageID] = new LicenseData {
+				PackageID = license.PackageID,
+				PaymentMethod = license.PaymentMethod,
+				TimeCreated = license.TimeCreated
+			};
 
-			if (!OwnedPackageIDs.ContainsKey(license.PackageID)) {
+			if (!OwnedPackages.ContainsKey(license.PackageID)) {
 				hasNewEntries = true;
 			}
 
@@ -2661,16 +3194,41 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			}
 		}
 
-		OwnedPackageIDs = ownedPackageIDs.ToImmutableDictionary();
+		OwnedPackages = ownedPackages.ToFrozenDictionary();
 
 		if (packageAccessTokens.Count > 0) {
 			ASF.GlobalDatabase.RefreshPackageAccessTokens(packageAccessTokens);
 		}
 
 		if (packagesToRefresh.Count > 0) {
-			ArchiLogger.LogGenericInfo(Strings.BotRefreshingPackagesData);
-			await ASF.GlobalDatabase.RefreshPackages(this, packagesToRefresh).ConfigureAwait(false);
-			ArchiLogger.LogGenericInfo(Strings.Done);
+			// Since Steam spams with this call, display message on info level only if refresh takes longer time
+			ArchiLogger.LogGenericTrace(Strings.BotRefreshingPackagesData);
+
+			bool displayFinish = false;
+
+			Task refreshTask = ASF.GlobalDatabase.RefreshPackages(this, packagesToRefresh);
+
+			try {
+				await refreshTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+			} catch (TimeoutException) {
+				ArchiLogger.LogGenericInfo(Strings.BotRefreshingPackagesData);
+
+				displayFinish = true;
+			}
+
+			if (await Task.WhenAny(refreshTask, Task.Delay(5000)).ConfigureAwait(false) != refreshTask) {
+				ArchiLogger.LogGenericInfo(Strings.BotRefreshingPackagesData);
+
+				displayFinish = true;
+			}
+
+			await refreshTask.ConfigureAwait(false);
+
+			if (displayFinish) {
+				ArchiLogger.LogGenericInfo(Strings.Done);
+			}
+
+			ArchiLogger.LogGenericTrace(Strings.Done);
 		}
 
 		if (hasNewEntries) {
@@ -2678,12 +3236,13 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		}
 	}
 
-	private void OnLoggedOff(SteamUser.LoggedOffCallback callback) {
+	private async void OnLoggedOff(SteamUser.LoggedOffCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 
-		LastLogOnResult = callback.Result;
+		// Keep LastLogOnResult for OnDisconnected()
+		LastLogOnResult = callback.Result > EResult.OK ? callback.Result : EResult.Invalid;
 
-		ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.BotLoggedOff, callback.Result));
+		ArchiLogger.LogGenericInfo(Strings.FormatBotLoggedOff(callback.Result));
 
 		switch (callback.Result) {
 			case EResult.LoggedInElsewhere:
@@ -2696,7 +3255,8 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				if (now.Subtract(LastLogonSessionReplaced).TotalHours < 1) {
 					ArchiLogger.LogGenericError(Strings.BotLogonSessionReplaced);
-					Stop();
+
+					await Stop().ConfigureAwait(false);
 
 					return;
 				}
@@ -2716,292 +3276,127 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		// Always reset one-time-only access tokens when we get OnLoggedOn() response
 		AuthCode = TwoFactorCode = null;
 
-		// Keep LastLogOnResult for OnDisconnected()
-		LastLogOnResult = callback.Result;
+		await HandleLoginResult(callback.Result, callback.ExtendedResult).ConfigureAwait(false);
 
-		HeartBeatFailures = 0;
-		StopConnectionFailureTimer();
+		if (callback.Result != EResult.OK) {
+			return;
+		}
 
-		switch (callback.Result) {
-			case EResult.AccountDisabled:
-				// Those failures are permanent, we should Stop() the bot if any of those happen
-				ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.BotUnableToLogin, callback.Result, callback.ExtendedResult));
-				Stop();
+		AccountFlags = callback.AccountFlags;
+		IPCountryCode = callback.IPCountryCode;
+		SteamID = callback.ClientSteamID ?? throw new InvalidOperationException(nameof(callback.ClientSteamID));
 
-				break;
-			case EResult.AccountLogonDenied:
-			case EResult.InvalidLoginAuthCode:
-				RequiredInput = ASF.EUserInputType.SteamGuard;
+		ArchiLogger.LogGenericInfo(Strings.FormatBotLoggedOn($"{SteamID}{(!string.IsNullOrEmpty(callback.VanityURL) ? $"/{callback.VanityURL}" : "")}"));
 
-				string? authCode = await Logging.GetUserInput(ASF.EUserInputType.SteamGuard, BotName).ConfigureAwait(false);
+		// Old status for these doesn't matter, we'll update them if needed
+		LoginFailures = 0;
+		LibraryLocked = PlayingBlocked = false;
 
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				if (string.IsNullOrEmpty(authCode) || !SetUserInput(ASF.EUserInputType.SteamGuard, authCode!)) {
-					ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(authCode)));
+		if (PlayingWasBlocked && (PlayingWasBlockedTimer == null)) {
+			InitPlayingWasBlockedTimer();
+		}
 
-					Stop();
-				}
+		if (IsAccountLimited) {
+			ArchiLogger.LogGenericWarning(Strings.BotAccountLimited);
+		}
 
-				break;
-			case EResult.AccountLoginDeniedNeedTwoFactor when !HasMobileAuthenticator:
-			case EResult.TwoFactorCodeMismatch when !HasMobileAuthenticator:
-				RequiredInput = ASF.EUserInputType.TwoFactorAuthentication;
+		if (IsAccountLocked) {
+			ArchiLogger.LogGenericWarning(Strings.BotAccountLocked);
+		}
 
-				string? twoFactorCode = await Logging.GetUserInput(ASF.EUserInputType.TwoFactorAuthentication, BotName).ConfigureAwait(false);
+		if ((callback.CellID != 0) && (ASF.GlobalDatabase != null) && (callback.CellID != ASF.GlobalDatabase.CellID)) {
+			ASF.GlobalDatabase.CellID = callback.CellID;
+		}
 
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				if (string.IsNullOrEmpty(twoFactorCode) || !SetUserInput(ASF.EUserInputType.TwoFactorAuthentication, twoFactorCode!)) {
-					ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(twoFactorCode)));
+		// Handle steamID-based maFile
+		if (!HasMobileAuthenticator) {
+			string maFilePath = Path.Combine(SharedInfo.ConfigDirectory, $"{SteamID}{SharedInfo.MobileAuthenticatorExtension}");
 
-					Stop();
-				}
+			if (File.Exists(maFilePath)) {
+				await ImportAuthenticatorFromFile(maFilePath).ConfigureAwait(false);
+			}
+		}
 
-				break;
-			case EResult.OK:
-				AccountFlags = callback.AccountFlags;
-				SteamID = callback.ClientSteamID ?? throw new InvalidOperationException(nameof(callback.ClientSteamID));
+		if (callback.ParentalSettings != null) {
+			(SteamParentalActive, string? steamParentalCode) = ValidateSteamParental(callback.ParentalSettings, BotConfig.SteamParentalCode, Program.SteamParentalGeneration);
 
-				ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.BotLoggedOn, $"{SteamID}{(!string.IsNullOrEmpty(callback.VanityURL) ? $"/{callback.VanityURL}" : "")}"));
+			if (SteamParentalActive) {
+				// Steam parental enabled
+				if (!string.IsNullOrEmpty(steamParentalCode)) {
+					// We were able to automatically generate it, potentially with help of the config
+					if (BotConfig.SteamParentalCode != steamParentalCode) {
+						if (!SetUserInput(ASF.EUserInputType.SteamParentalCode, steamParentalCode)) {
+							ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(steamParentalCode)));
 
-				// Old status for these doesn't matter, we'll update them if needed
-				LoginFailures = 0;
-				LibraryLocked = PlayingBlocked = false;
+							await Stop().ConfigureAwait(false);
 
-				if (PlayingWasBlocked && (PlayingWasBlockedTimer == null)) {
-					InitPlayingWasBlockedTimer();
-				}
-
-				if (IsAccountLimited) {
-					ArchiLogger.LogGenericWarning(Strings.BotAccountLimited);
-				}
-
-				if (IsAccountLocked) {
-					ArchiLogger.LogGenericWarning(Strings.BotAccountLocked);
-				}
-
-				if ((callback.CellID != 0) && (ASF.GlobalDatabase != null) && (callback.CellID != ASF.GlobalDatabase.CellID)) {
-					ASF.GlobalDatabase.CellID = callback.CellID;
-				}
-
-				// Handle steamID-based maFile
-				if (!HasMobileAuthenticator) {
-					string maFilePath = Path.Combine(SharedInfo.ConfigDirectory, $"{SteamID}{SharedInfo.MobileAuthenticatorExtension}");
-
-					if (File.Exists(maFilePath)) {
-						await ImportAuthenticatorFromFile(maFilePath).ConfigureAwait(false);
-					}
-				}
-
-				if (callback.ParentalSettings != null) {
-					(SteamParentalActive, string? steamParentalCode) = ValidateSteamParental(callback.ParentalSettings, BotConfig.SteamParentalCode, Program.SteamParentalGeneration);
-
-					if (SteamParentalActive) {
-						// Steam parental enabled
-						if (!string.IsNullOrEmpty(steamParentalCode)) {
-							// We were able to automatically generate it, potentially with help of the config
-							if (BotConfig.SteamParentalCode != steamParentalCode) {
-								// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-								if (!SetUserInput(ASF.EUserInputType.SteamParentalCode, steamParentalCode!)) {
-									ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(steamParentalCode)));
-
-									Stop();
-
-									break;
-								}
-							}
-						} else {
-							// We failed to generate the pin ourselves, ask the user
-							RequiredInput = ASF.EUserInputType.SteamParentalCode;
-
-							steamParentalCode = await Logging.GetUserInput(ASF.EUserInputType.SteamParentalCode, BotName).ConfigureAwait(false);
-
-							// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-							if (string.IsNullOrEmpty(steamParentalCode) || !SetUserInput(ASF.EUserInputType.SteamParentalCode, steamParentalCode!)) {
-								ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(steamParentalCode)));
-
-								Stop();
-
-								break;
-							}
+							return;
 						}
 					}
 				} else {
-					// Steam parental disabled
-					SteamParentalActive = false;
-				}
+					// We failed to generate the pin ourselves, ask the user
+					RequiredInput = ASF.EUserInputType.SteamParentalCode;
 
-				ArchiWebHandler.OnVanityURLChanged(callback.VanityURL);
+					steamParentalCode = await Logging.GetUserInput(ASF.EUserInputType.SteamParentalCode, BotName).ConfigureAwait(false);
 
-				if (!await ArchiWebHandler.Init(SteamID, SteamClient.Universe, callback.WebAPIUserNonce ?? throw new InvalidOperationException(nameof(callback.WebAPIUserNonce)), SteamParentalActive ? BotConfig.SteamParentalCode : null).ConfigureAwait(false)) {
-					if (!await RefreshSession().ConfigureAwait(false)) {
-						break;
+					if (string.IsNullOrEmpty(steamParentalCode) || !SetUserInput(ASF.EUserInputType.SteamParentalCode, steamParentalCode)) {
+						ArchiLogger.LogGenericError(Strings.FormatErrorIsInvalid(nameof(steamParentalCode)));
+
+						await Stop().ConfigureAwait(false);
+
+						return;
 					}
 				}
-
-				// Pre-fetch API key for future usage if possible
-				Utilities.InBackground(ArchiWebHandler.HasValidApiKey);
-
-				if ((GamesRedeemerInBackgroundTimer == null) && BotDatabase.HasGamesToRedeemInBackground) {
-					Utilities.InBackground(() => RedeemGamesInBackground());
-				}
-
-				ArchiHandler.SetCurrentMode(BotConfig.UserInterfaceMode);
-				ArchiHandler.RequestItemAnnouncements();
-
-				// Sometimes Steam won't send us our own PersonaStateCallback, so request it explicitly
-				RequestPersonaStateUpdate();
-
-				Utilities.InBackground(InitializeFamilySharing);
-
-				ResetPersonaState();
-
-				if (BotConfig.SteamMasterClanID != 0) {
-					Utilities.InBackground(
-						async () => {
-							if (!await ArchiWebHandler.JoinGroup(BotConfig.SteamMasterClanID).ConfigureAwait(false)) {
-								ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ArchiWebHandler.JoinGroup)));
-							}
-
-							await JoinMasterChatGroupID().ConfigureAwait(false);
-						}
-					);
-				}
-
-				if (BotConfig.RemoteCommunication.HasFlag(BotConfig.ERemoteCommunication.SteamGroup)) {
-					Utilities.InBackground(() => ArchiWebHandler.JoinGroup(SharedInfo.ASFGroupSteamID));
-				}
-
-				if (CardsFarmer.Paused) {
-					// Emit initial game playing status in this case
-					Utilities.InBackground(ResetGamesPlayed);
-				}
-
-				SteamPICSChanges.OnBotLoggedOn();
-
-				await PluginsCore.OnBotLoggedOn(this).ConfigureAwait(false);
-
-				break;
-			case EResult.AccountLoginDeniedNeedTwoFactor:
-			case EResult.InvalidPassword:
-			case EResult.NoConnection:
-			case EResult.PasswordRequiredToKickSession: // Not sure about this one, it seems to be just generic "try again"? #694
-			case EResult.RateLimitExceeded:
-			case EResult.ServiceUnavailable:
-			case EResult.Timeout:
-			case EResult.TryAnotherCM:
-			case EResult.TwoFactorCodeMismatch:
-				ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.BotUnableToLogin, callback.Result, callback.ExtendedResult));
-
-				switch (callback.Result) {
-					case EResult.AccountLoginDeniedNeedTwoFactor:
-					case EResult.TwoFactorCodeMismatch:
-						// There is a possibility that our cached time is no longer appropriate, so we should reset the cache in this case in order to fetch it upon the next login attempt
-						// Yes, this might as well be just invalid 2FA credentials, but we can't be sure about that, and we have LoginFailures designed to verify that for us
-						await MobileAuthenticator.ResetSteamTimeDifference().ConfigureAwait(false);
-
-						if (++LoginFailures >= MaxLoginFailures) {
-							LoginFailures = 0;
-							ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.BotInvalidAuthenticatorDuringLogin, MaxLoginFailures));
-							Stop();
-						}
-
-						break;
-					case EResult.InvalidPassword when string.IsNullOrEmpty(BotDatabase.LoginKey) && (++LoginFailures >= MaxLoginFailures):
-						LoginFailures = 0;
-						ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.BotInvalidPasswordDuringLogin, MaxLoginFailures));
-						Stop();
-
-						break;
-				}
-
-				break;
-			default:
-				// Unexpected result, shutdown immediately
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(callback.Result), callback.Result));
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.BotUnableToLogin, callback.Result, callback.ExtendedResult));
-				Stop();
-
-				break;
+			}
+		} else {
+			// Steam parental disabled
+			SteamParentalActive = false;
 		}
-	}
 
-	private void OnLoginKey(SteamUser.LoginKeyCallback callback) {
-		ArgumentNullException.ThrowIfNull(callback);
-		ArgumentNullException.ThrowIfNull(callback.LoginKey);
+		ArchiWebHandler.OnVanityURLChanged(callback.VanityURL);
 
-		if (!ShouldUseLoginKeys) {
+		// Establish web session
+		if (!await RefreshWebSession().ConfigureAwait(false)) {
 			return;
 		}
 
-		string? loginKey = callback.LoginKey;
-
-		if (BotConfig.PasswordFormat.HasTransformation()) {
-			loginKey = ArchiCryptoHelper.Encrypt(BotConfig.PasswordFormat, loginKey);
+		if ((GamesRedeemerInBackgroundTimer == null) && BotDatabase.HasGamesToRedeemInBackground) {
+			Utilities.InBackground(() => RedeemGamesInBackground());
 		}
 
-		BotDatabase.LoginKey = loginKey;
-		SteamUser.AcceptNewLoginKey(callback);
-	}
+		ArchiHandler.RequestItemAnnouncements();
 
-	private async void OnMachineAuth(SteamUser.UpdateMachineAuthCallback callback) {
-		ArgumentNullException.ThrowIfNull(callback);
+		// Sometimes Steam won't send us our own PersonaStateCallback, so request it explicitly
+		RequestPersonaStateUpdate();
 
-		string sentryFilePath = GetFilePath(EFileType.SentryFile);
+		Utilities.InBackground(InitializeFamilySharing);
 
-		if (string.IsNullOrEmpty(sentryFilePath)) {
-			ArchiLogger.LogNullError(sentryFilePath);
+		ResetPersonaState();
 
-			return;
+		if (BotConfig.SteamMasterClanID != 0) {
+			Utilities.InBackground(
+				async () => {
+					if (!await ArchiWebHandler.JoinGroup(BotConfig.SteamMasterClanID).ConfigureAwait(false)) {
+						ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(nameof(ArchiWebHandler.JoinGroup)));
+					}
+
+					await JoinMasterChatGroupID().ConfigureAwait(false);
+				}
+			);
 		}
 
-		long fileSize;
-		byte[] sentryHash;
-
-		try {
-#pragma warning disable CA2000 // False positive, we're actually wrapping it in the using clause below exactly for that purpose
-			FileStream fileStream = File.Open(sentryFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite);
-#pragma warning restore CA2000 // False positive, we're actually wrapping it in the using clause below exactly for that purpose
-
-			await using (fileStream.ConfigureAwait(false)) {
-				fileStream.Seek(callback.Offset, SeekOrigin.Begin);
-
-				await fileStream.WriteAsync(callback.Data.AsMemory(0, callback.BytesToWrite)).ConfigureAwait(false);
-
-				fileSize = fileStream.Length;
-				fileStream.Seek(0, SeekOrigin.Begin);
-
-#pragma warning disable CA5350 // This is actually a fair warning, but there is nothing we can do about Steam using weak cryptographic algorithms
-				using SHA1 hashAlgorithm = SHA1.Create();
-
-				sentryHash = await hashAlgorithm.ComputeHashAsync(fileStream).ConfigureAwait(false);
-#pragma warning restore CA5350 // This is actually a fair warning, but there is nothing we can do about Steam using weak cryptographic algorithms
-			}
-		} catch (Exception e) {
-			ArchiLogger.LogGenericException(e);
-
-			try {
-				File.Delete(sentryFilePath);
-			} catch {
-				// Ignored, we can only try to delete faulted file at best
-			}
-
-			return;
+		if (BotConfig.RemoteCommunication.HasFlag(BotConfig.ERemoteCommunication.SteamGroup)) {
+			Utilities.InBackground(() => ArchiWebHandler.JoinGroup(SharedInfo.ASFGroupSteamID));
 		}
 
-		// Inform the steam servers that we're accepting this sentry file
-		SteamUser.SendMachineAuthResponse(
-			new SteamUser.MachineAuthDetails {
-				BytesWritten = callback.BytesToWrite,
-				FileName = callback.FileName,
-				FileSize = (int) fileSize,
-				JobID = callback.JobID,
-				LastError = 0,
-				Offset = callback.Offset,
-				OneTimePassword = callback.OneTimePassword,
-				Result = EResult.OK,
-				SentryFileHash = sentryHash
-			}
-		);
+		if (CardsFarmer.Paused) {
+			// Emit initial game playing status in this case
+			Utilities.InBackground(ResetGamesPlayed);
+		}
+
+		SteamPICSChanges.OnBotLoggedOn();
+
+		await PluginsCore.OnBotLoggedOn(this).ConfigureAwait(false);
 	}
 
 	private async void OnPersonaState(SteamFriends.PersonaStateCallback callback) {
@@ -3017,9 +3412,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		string? avatarHash = null;
 
 		if ((callback.AvatarHash?.Length > 0) && callback.AvatarHash.Any(static singleByte => singleByte > 0)) {
-#pragma warning disable CA1308 // False positive, we're intentionally converting this part to lowercase and it's not used for any security decisions based on the result of the normalization
-			avatarHash = Convert.ToHexString(callback.AvatarHash).ToLowerInvariant();
-#pragma warning restore CA1308 // False positive, we're intentionally converting this part to lowercase and it's not used for any security decisions based on the result of the normalization
+			avatarHash = Convert.ToHexStringLower(callback.AvatarHash);
 
 			if (string.IsNullOrEmpty(avatarHash) || avatarHash.All(static singleChar => singleChar == '0')) {
 				avatarHash = null;
@@ -3031,7 +3424,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await PluginsCore.OnSelfPersonaState(this, callback, Nickname, AvatarHash).ConfigureAwait(false);
 	}
 
-	private async void OnPlayingSessionState(ArchiHandler.PlayingSessionStateCallback callback) {
+	private async void OnPlayingSessionState(SteamUser.PlayingSessionStateCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 
 		if (callback.PlayingBlocked == PlayingBlocked) {
@@ -3042,24 +3435,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await CheckOccupationStatus().ConfigureAwait(false);
 	}
 
-	private async void OnSendItemsTimer(object? state = null) => await Actions.SendInventory(filterFunction: item => BotConfig.LootableTypes.Contains(item.Type)).ConfigureAwait(false);
+	private async void OnRefreshTokensTimer(object? state = null) {
+		DateTime accessTokenValidUntil = AccessTokenValidUntil.GetValueOrDefault();
 
-	private async void OnServiceMethod(SteamUnifiedMessages.ServiceMethodNotification notification) {
-		ArgumentNullException.ThrowIfNull(notification);
+		if ((accessTokenValidUntil > DateTime.MinValue) && (accessTokenValidUntil > DateTime.UtcNow.AddMinutes(MinimumAccessTokenValidityMinutes + 1))) {
+			// We don't need to refresh just yet
+			InitRefreshTokensTimer(accessTokenValidUntil);
 
-		switch (notification.MethodName) {
-			case "ChatRoomClient.NotifyIncomingChatMessage#1":
-				await OnIncomingChatMessage((CChatRoom_IncomingChatMessage_Notification) notification.Body).ConfigureAwait(false);
-
-				break;
-			case "FriendMessagesClient.IncomingMessage#1":
-				await OnIncomingMessage((CFriendMessages_IncomingMessage_Notification) notification.Body).ConfigureAwait(false);
-
-				break;
+			return;
 		}
+
+		await RefreshWebSession().ConfigureAwait(false);
 	}
 
-	private async void OnSharedLibraryLockStatus(ArchiHandler.SharedLibraryLockStatusCallback callback) {
+	private async void OnSendItemsTimer(object? state = null) => await Actions.SendInventory(filterFunction: item => BotConfig.LootableTypes.Contains(item.Type)).ConfigureAwait(false);
+
+	private async void OnSharedLibraryLockStatus(SharedLibraryLockStatusCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 
 		// Ignore no status updates
@@ -3080,6 +3471,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		await CheckOccupationStatus().ConfigureAwait(false);
 	}
 
+	private void OnTradeCheckTimer(object? state = null) {
+		if (IsConnectedAndLoggedOn) {
+			Utilities.InBackground(Trading.OnNewTrade);
+		}
+	}
+
 	private void OnUserNotifications(UserNotificationsCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 		ArgumentNullException.ThrowIfNull(callback.Notifications);
@@ -3088,7 +3485,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		HashSet<UserNotificationsCallback.EUserNotification> newPluginNotifications = new();
+		HashSet<UserNotificationsCallback.EUserNotification> newPluginNotifications = [];
 
 		foreach ((UserNotificationsCallback.EUserNotification notification, uint count) in callback.Notifications) {
 			bool newNotification;
@@ -3117,6 +3514,10 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 					break;
 				case UserNotificationsCallback.EUserNotification.Trading when newNotification:
+					if ((TradeCheckTimer != null) && (BotConfig.TradeCheckPeriod > 0)) {
+						TradeCheckTimer.Change(TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod), TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod));
+					}
+
 					Utilities.InBackground(Trading.OnNewTrade);
 
 					break;
@@ -3134,11 +3535,20 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ArchiWebHandler.OnVanityURLChanged(callback.VanityURL);
 	}
 
-	private void OnWalletUpdate(SteamUser.WalletInfoCallback callback) {
+	private void OnWalletInfo(SteamUser.WalletInfoCallback callback) {
 		ArgumentNullException.ThrowIfNull(callback);
 
 		WalletBalance = callback.LongBalance;
+		WalletBalanceDelayed = callback.LongBalanceDelayed;
 		WalletCurrency = callback.Currency;
+	}
+
+	private async Task Reconnect() {
+		if (SteamClient.IsConnected) {
+			Disconnect(true);
+		} else {
+			await Connect().ConfigureAwait(false);
+		}
 	}
 
 	private async void RedeemGamesInBackground(object? state = null) {
@@ -3161,53 +3571,48 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				(string? key, string? name) = BotDatabase.GetGameToRedeemInBackground();
 
 				if (string.IsNullOrEmpty(key)) {
-					ArchiLogger.LogNullError(key);
-
+					// No more games to redeem left, possible due to e.g. queue purge
 					break;
 				}
 
-				if (string.IsNullOrEmpty(name)) {
-					ArchiLogger.LogNullError(name);
+				CStore_RegisterCDKey_Response? response = await Actions.RedeemKey(key).ConfigureAwait(false);
 
-					break;
-				}
-
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				SteamApps.PurchaseResponseCallback? result = await Actions.RedeemKey(key!).ConfigureAwait(false);
-
-				if (result == null) {
+				if (response == null) {
 					continue;
 				}
 
+				EResult result = (EResult) response.purchase_receipt_info.purchase_status;
+				EPurchaseResultDetail purchaseResultDetail = (EPurchaseResultDetail) response.purchase_result_details;
+
 				string? balanceText = null;
 
-				if ((result.PurchaseResultDetail == EPurchaseResultDetail.CannotRedeemCodeFromClient) || ((result.PurchaseResultDetail == EPurchaseResultDetail.BadActivationCode) && assumeWalletKeyOnBadActivationCode)) {
+				if ((purchaseResultDetail == EPurchaseResultDetail.CannotRedeemCodeFromClient) || ((purchaseResultDetail == EPurchaseResultDetail.BadActivationCode) && assumeWalletKeyOnBadActivationCode)) {
 					// If it's a wallet code, we try to redeem it first, then handle the inner result as our primary one
-					// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-					(EResult Result, EPurchaseResultDetail? PurchaseResult, string? BalanceText)? walletResult = await ArchiWebHandler.RedeemWalletKey(key!).ConfigureAwait(false);
+					(EResult Result, EPurchaseResultDetail? PurchaseResult, string? BalanceText)? walletResult = await ArchiWebHandler.RedeemWalletKey(key).ConfigureAwait(false);
 
 					if (walletResult != null) {
-						result.Result = walletResult.Value.Result;
-						result.PurchaseResultDetail = walletResult.Value.PurchaseResult.GetValueOrDefault(walletResult.Value.Result == EResult.OK ? EPurchaseResultDetail.NoDetail : EPurchaseResultDetail.BadActivationCode); // BadActivationCode is our smart guess in this case
+						result = walletResult.Value.Result;
+						purchaseResultDetail = walletResult.Value.PurchaseResult.GetValueOrDefault(walletResult.Value.Result == EResult.OK ? EPurchaseResultDetail.NoDetail : EPurchaseResultDetail.BadActivationCode); // BadActivationCode is our smart guess in this case
 						balanceText = walletResult.Value.BalanceText;
 					} else {
-						result.Result = EResult.Timeout;
-						result.PurchaseResultDetail = EPurchaseResultDetail.Timeout;
+						result = EResult.Timeout;
+						purchaseResultDetail = EPurchaseResultDetail.Timeout;
 					}
 				}
 
-				Dictionary<uint, string>? items = result.ParseItems();
+				Dictionary<uint, string>? items = response.purchase_receipt_info.line_items.Count > 0 ? response.purchase_receipt_info.line_items.ToDictionary(static lineItem => lineItem.packageid, static lineItem => lineItem.line_item_description) : null;
 
-				ArchiLogger.LogGenericDebug(items?.Count > 0 ? string.Format(CultureInfo.CurrentCulture, Strings.BotRedeemWithItems, key, $"{result.Result}/{result.PurchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}", string.Join(", ", items)) : string.Format(CultureInfo.CurrentCulture, Strings.BotRedeem, key, $"{result.Result}/{result.PurchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}"));
+				ArchiLogger.LogGenericDebug(items?.Count > 0 ? Strings.FormatBotRedeemWithItems(key, $"{result}/{purchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}", string.Join(", ", items)) : Strings.FormatBotRedeem(key, $"{result}/{purchaseResultDetail}{(!string.IsNullOrEmpty(balanceText) ? $"/{balanceText}" : "")}"));
 
 				bool rateLimited = false;
 				bool redeemed = false;
 
-				switch (result.PurchaseResultDetail) {
+				switch (purchaseResultDetail) {
 					case EPurchaseResultDetail.AccountLocked:
 					case EPurchaseResultDetail.AlreadyPurchased:
 					case EPurchaseResultDetail.CannotRedeemCodeFromClient:
 					case EPurchaseResultDetail.DoesNotOwnRequiredApp:
+					case EPurchaseResultDetail.NoWallet:
 					case EPurchaseResultDetail.RestrictedCountry:
 					case EPurchaseResultDetail.Timeout:
 						break;
@@ -3222,7 +3627,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 						break;
 					default:
-						ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(result.PurchaseResultDetail), result.PurchaseResultDetail));
+						ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(purchaseResultDetail), purchaseResultDetail));
 
 						break;
 				}
@@ -3231,16 +3636,16 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					break;
 				}
 
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				BotDatabase.RemoveGameToRedeemInBackground(key!);
+				BotDatabase.RemoveGameToRedeemInBackground(key);
 
 				// If user omitted the name or intentionally provided the same name as key, replace it with the Steam result
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				if (name!.Equals(key, StringComparison.OrdinalIgnoreCase) && (items?.Count > 0)) {
+				name ??= key;
+
+				if (((name.Length == 0) || name.Equals(key, StringComparison.OrdinalIgnoreCase)) && (items?.Count > 0)) {
 					name = string.Join(", ", items.Values);
 				}
 
-				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{result.PurchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
+				string logEntry = $"{name}{DefaultBackgroundKeysRedeemerSeparator}[{purchaseResultDetail}]{(items?.Count > 0 ? $"{DefaultBackgroundKeysRedeemerSeparator}{string.Join(", ", items)}" : "")}{DefaultBackgroundKeysRedeemerSeparator}{key}";
 
 				string filePath = GetFilePath(redeemed ? EFileType.KeysToRedeemUsed : EFileType.KeysToRedeemUnused);
 
@@ -3254,14 +3659,14 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					await File.AppendAllTextAsync(filePath, $"{logEntry}{Environment.NewLine}").ConfigureAwait(false);
 				} catch (Exception e) {
 					ArchiLogger.LogGenericException(e);
-					ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.Content, logEntry));
+					ArchiLogger.LogGenericError(Strings.FormatContent(logEntry));
 
 					break;
 				}
 			}
 
 			if (IsConnectedAndLoggedOn && BotDatabase.HasGamesToRedeemInBackground) {
-				ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.BotRateLimitExceeded, TimeSpan.FromHours(RedeemCooldownInHours).ToHumanReadable()));
+				ArchiLogger.LogGenericInfo(Strings.FormatBotRateLimitExceeded(TimeSpan.FromHours(RedeemCooldownInHours).ToHumanReadable()));
 
 				GamesRedeemerInBackgroundTimer = new Timer(
 					RedeemGamesInBackground,
@@ -3308,7 +3713,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				}
 			}
 
-			ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.BotIdlingSelectedGames, nameof(BotConfig.GamesPlayedWhileIdle), string.Join(", ", BotConfig.GamesPlayedWhileIdle)));
+			ArchiLogger.LogGenericInfo(Strings.FormatBotIdlingSelectedGames(nameof(BotConfig.GamesPlayedWhileIdle), string.Join(", ", BotConfig.GamesPlayedWhileIdle)));
 		}
 
 		await ArchiHandler.PlayGames(BotConfig.GamesPlayedWhileIdle, BotConfig.CustomGamePlayedWhileIdle).ConfigureAwait(false);
@@ -3347,11 +3752,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				HashSet<Asset> inventory;
 
 				try {
-					inventory = await ArchiWebHandler.GetInventoryAsync()
-						.Where(item => item.Tradable && appIDs.Contains(item.RealAppID) && BotConfig.CompleteTypesToSend.Contains(item.Type))
+					inventory = await ArchiHandler.GetMyInventoryAsync(tradableOnly: true)
+						.Where(item => appIDs.Contains(item.RealAppID) && BotConfig.CompleteTypesToSend.Contains(item.Type))
 						.ToHashSetAsync()
 						.ConfigureAwait(false);
-				} catch (HttpRequestException e) {
+				} catch (TimeoutException e) {
 					ArchiLogger.LogGenericWarningException(e);
 
 					return;
@@ -3362,12 +3767,12 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				}
 
 				if (inventory.Count == 0) {
-					ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(inventory)));
+					ArchiLogger.LogGenericWarning(Strings.FormatErrorIsEmpty(nameof(inventory)));
 
 					return;
 				}
 
-				Dictionary<(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity), List<uint>> inventorySets = Trading.GetInventorySets(inventory);
+				Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), List<uint>> inventorySets = Trading.GetInventorySets(inventory);
 
 				// Filter appIDs that can't possibly be completed due to having less cards than smallest badges possible
 				appIDs.IntersectWith(inventorySets.Where(static kv => kv.Value.Count >= MinCardsPerBadge).Select(static kv => kv.Key.RealAppID));
@@ -3382,9 +3787,9 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					return;
 				}
 
-				Dictionary<(uint RealAppID, Asset.EType Type, Asset.ERarity Rarity), (uint Sets, byte CardsPerSet)> itemsToTakePerInventorySet = new();
+				Dictionary<(uint RealAppID, EAssetType Type, EAssetRarity Rarity), (uint Sets, byte CardsPerSet)> itemsToTakePerInventorySet = new();
 
-				foreach (((uint RealAppID, Asset.EType Type, Asset.ERarity Rarity) key, List<uint> amounts) in inventorySets.Where(set => appIDs.Contains(set.Key.RealAppID))) {
+				foreach (((uint RealAppID, EAssetType Type, EAssetRarity Rarity) key, List<uint> amounts) in inventorySets.Where(set => appIDs.Contains(set.Key.RealAppID))) {
 					if (!cardsCountPerAppID.TryGetValue(key.RealAppID, out byte cardsCount) || (cardsCount == 0)) {
 						throw new InvalidOperationException(nameof(cardsCount));
 					}
@@ -3423,9 +3828,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
 
-		if (string.IsNullOrEmpty(messagePart)) {
-			throw new ArgumentNullException(nameof(messagePart));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(messagePart);
 
 		if (!IsConnectedAndLoggedOn) {
 			return false;
@@ -3444,6 +3847,11 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				}
 
 				switch (result) {
+					case EResult.Blocked:
+						// No point in retrying, those failures are permanent
+						ArchiLogger.LogGenericWarning(Strings.FormatWarningFailedWithError(result));
+
+						return false;
 					case EResult.Busy:
 					case EResult.Fail:
 					case EResult.LimitExceeded:
@@ -3456,7 +3864,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					case EResult.OK:
 						return true;
 					default:
-						ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(result), result));
+						ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(result), result));
 
 						return false;
 				}
@@ -3493,6 +3901,37 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		ConnectionFailureTimer = null;
 	}
 
+	private async Task StopHandlingCallbacks() {
+		if (CallbacksAborted == null) {
+			return;
+		}
+
+		await CallbacksAborted.CancelAsync().ConfigureAwait(false);
+
+		CallbacksAborted.Dispose();
+		CallbacksAborted = null;
+	}
+
+	private async Task StopHandlingCallbacksIfPossible() {
+		if ((CallbacksAborted == null) || KeepRunning) {
+			return;
+		}
+
+		await ConnectionSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+#pragma warning disable CA1508 // False positive, the state could change between our previous check and this one due to semaphore wait
+			if ((CallbacksAborted == null) || KeepRunning) {
+				return;
+			}
+#pragma warning restore CA1508 // False positive, the state could change between our previous check and this one due to semaphore wait
+
+			await StopHandlingCallbacks().ConfigureAwait(false);
+		} finally {
+			ConnectionSemaphore.Release();
+		}
+	}
+
 	private void StopPlayingWasBlockedTimer() {
 		if (PlayingWasBlockedTimer == null) {
 			return;
@@ -3502,10 +3941,71 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		PlayingWasBlockedTimer = null;
 	}
 
+	private void StopRefreshTokensTimer() {
+		if (RefreshTokensTimer == null) {
+			return;
+		}
+
+		RefreshTokensTimer.Dispose();
+		RefreshTokensTimer = null;
+	}
+
+	private async Task<bool> UnpackBoosterPacks() {
+		// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+		lock (UnpackBoosterPacksSemaphore) {
+			if (UnpackBoosterPacksScheduled) {
+				return false;
+			}
+
+			UnpackBoosterPacksScheduled = true;
+		}
+
+		await UnpackBoosterPacksSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			// ReSharper disable once SuspiciousLockOverSynchronizationPrimitive - this is not a mistake, we need extra synchronization, and we can re-use the semaphore object for that
+			lock (UnpackBoosterPacksSemaphore) {
+				UnpackBoosterPacksScheduled = false;
+			}
+
+			await Actions.UnpackBoosterPacks().ConfigureAwait(false);
+		} finally {
+			UnpackBoosterPacksSemaphore.Release();
+		}
+
+		return true;
+	}
+
+	private void UpdateTokens(string accessToken, string? refreshToken = null) {
+		ArgumentException.ThrowIfNullOrEmpty(accessToken);
+
+		AccessToken = accessToken;
+
+		if (!string.IsNullOrEmpty(refreshToken)) {
+			RefreshToken = refreshToken;
+		}
+
+		if (BotConfig.UseLoginKeys) {
+			if (BotConfig.PasswordFormat.HasTransformation()) {
+				BotDatabase.AccessToken = ArchiCryptoHelper.Encrypt(BotConfig.PasswordFormat, accessToken);
+
+				if (!string.IsNullOrEmpty(refreshToken)) {
+					BotDatabase.RefreshToken = ArchiCryptoHelper.Encrypt(BotConfig.PasswordFormat, refreshToken);
+				}
+			} else {
+				BotDatabase.AccessToken = accessToken;
+
+				if (!string.IsNullOrEmpty(refreshToken)) {
+					BotDatabase.RefreshToken = refreshToken;
+				}
+			}
+		}
+	}
+
 	private (bool IsSteamParentalEnabled, string? SteamParentalCode) ValidateSteamParental(ParentalSettings settings, string? steamParentalCode = null, bool allowGeneration = true) {
 		ArgumentNullException.ThrowIfNull(settings);
 
-		if (!settings.is_enabled) {
+		if (!settings.is_enabled || (settings.passwordhash == null)) {
 			return (false, null);
 		}
 
@@ -3525,7 +4025,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 				break;
 			default:
-				ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(settings.passwordhashtype), settings.passwordhashtype));
+				ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(settings.passwordhashtype), settings.passwordhashtype));
 
 				return (true, null);
 		}
@@ -3533,8 +4033,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		if (!string.IsNullOrEmpty(steamParentalCode)) {
 			byte i = 0;
 
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			byte[] password = new byte[steamParentalCode!.Length];
+			byte[] password = new byte[steamParentalCode.Length];
 
 			foreach (char character in steamParentalCode.TakeWhile(static character => character is >= '0' and <= '9')) {
 				password[i++] = (byte) character;
@@ -3568,7 +4067,6 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		KeysToRedeem,
 		KeysToRedeemUnused,
 		KeysToRedeemUsed,
-		MobileAuthenticator,
-		SentryFile
+		MobileAuthenticator
 	}
 }

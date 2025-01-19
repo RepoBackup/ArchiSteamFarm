@@ -4,16 +4,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="ConfigureAwaitChecker.Analyzer" PrivateAssets="all" />
 		<PackageReference Include="JetBrains.Annotations" PrivateAssets="all" />
-		<PackageReference Include="Newtonsoft.Json" IncludeAssets="compile" />
+		<PackageReference Include="Microsoft.CodeAnalysis.ResxSourceGenerator" PrivateAssets="all" />
 		<PackageReference Include="SteamKit2" IncludeAssets="compile" />
 		<PackageReference Include="System.Composition.AttributedModel" IncludeAssets="compile" />
-	</ItemGroup>
-
-	<ItemGroup Condition="'$(TargetFramework)' == 'net481' OR '$(TargetFramework)' == 'netstandard2.1'">
-		<!-- Madness is already included in netf build of ASF, so we don't need to emit it ourselves -->
-		<PackageReference Update="JustArchiNET.Madness" IncludeAssets="compile" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -21,17 +15,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<EmbeddedResource Update="Localization\Strings.resx">
-			<Generator>ResXFileCodeGenerator</Generator>
-			<LastGenOutput>Strings.Designer.cs</LastGenOutput>
-		</EmbeddedResource>
+		<EmbeddedResource Update="Localization\Strings.resx" EmitFormatMethods="true" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<Compile Update="Localization\Strings.Designer.cs">
-			<AutoGen>True</AutoGen>
-			<DependentUpon>Strings.resx</DependentUpon>
-			<DesignTime>True</DesignTime>
-		</Compile>
-	</ItemGroup>
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
+		<Copy SourceFolders="$(TargetDir)" DestinationFolder="..\ArchiSteamFarm\bin\$(Configuration)\$(TargetFramework)\plugins\$(AssemblyName)\" SkipUnchangedFiles="true" />
+	</Target>
 </Project>

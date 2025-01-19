@@ -9,7 +9,7 @@ Before making an issue or pull request, you should carefully read **[ASF wiki](h
 Examples of **invalid** issues:
 - Asking how to install the program or use one of its functions
 - Having technical difficulties running the program in some environment, encountering expected issues caused by the user's neglect
-- Reporting problems that are not caused by ASF, such as ASF-ui issues or Steam not allowing you to log in
+- Reporting problems that are not caused by ASF, such as ASF-ui issues or Steam not allowing you to send trade offers
 - All issues encountered while running ASF in unsupported environment/setup, such as those with modified ASF source, having more bots than our maximum recommended limit or using custom plugins
 - Other activities that are not related to ASF development in any way and do not require any development action from us
 
@@ -35,7 +35,7 @@ It would also be cool if you could reproduce your issue on latest **[pre-release
 
 While everybody is able to create suggestions how to improve ASF, GitHub issues is not the proper place to discuss if your enhancement makes sense - by posting it you already **believe** that it makes sense, and you're **ready to convince us how**. If you have some idea but you're not sure if it's possible, makes sense, or fits ASF purpose - you have our support channels where we'll be happy to discuss given enhancement in calm atmosphere, evaluating possibilities and pros/cons. This is what we suggest to do in the first place, as in GitHub issue you're switching from **having an idea** into **having a valid enhancement with general concept, given purpose and fixed details - you're ready to defend your idea and convince us how it can be useful for ASF**. This is the general reason why many issues are rejected - because you're lacking details that would prove your suggestion being worthy.
 
-ASF has a strict scope - farming Steam cards from Steam games + basic bots management. ASF scope is very subjective and evaluated on practical/moral basis - how much this feature fits ASF, how much actual coding effort is required to make it happen, how useful/wanted this feature is by the community and likewise. In general we don't mind further enhancements to the program, as there is always a room for improvement, but at the same time we consider ASF to be feature-complete and vast majority of things that are suggested today are simply out of the scope of ASF as a program. This is why we've rejected **[a lot](https://github.com/JustArchiNET/ArchiSteamFarm/issues?q=label%3A"✨+Enhancement"+label%3A"👎+Not+going+to+happen")** of general enhancements, for various different reasons, mainly regarding the scope of the program. Some people may find it hard to understand why we're rather sceptical towards suggestions, while the answer for that isn't obvious at first.
+ASF has a strict scope - farming Steam cards from Steam games + basic bots management. ASF scope is very subjective and evaluated on practical/moral basis - how much this feature fits ASF, how much actual coding effort is required to make it happen, how useful/wanted this feature is by the community and likewise. In general we don't mind further enhancements to the program, as there is always a room for improvement, but at the same time we consider ASF to be feature-complete in what we call "active maintenance" state, and vast majority of things that are suggested today are simply out of the scope of ASF as a program. This is why we've rejected **[a lot](https://github.com/JustArchiNET/ArchiSteamFarm/issues?q=label%3A"✨+Enhancement"+label%3A"👎+Not+going+to+happen")** of general enhancements, for various different reasons, mainly regarding the scope of the program. Some people may find it hard to understand why we're rather sceptical towards suggestions, while the answer for that isn't obvious at first.
 
 > In the lifetime of an Open Source project, only 10 percent of the time spent adding a feature will be spent coding it. The other 90 percent will be spent in support of that feature.
 
@@ -77,9 +77,9 @@ For more info about the license, please check out **[license](https://github.com
 
 ### Code style
 
-Please stick with ASF code style when submitting PRs. In repo you can find several different files dedicated to making it easier for you:
+Please try to stick with ASF code style when submitting PRs. In repo you can find at least several different files dedicated to making it easier for you:
 
 - **[EditorConfig](https://github.com/JustArchiNET/ArchiSteamFarm/blob/main/.editorconfig)** file which is supported by all major IDEs and requires no further setup. It's a good starting point, although it doesn't include all the rules that we'd like to see.
 - **[DotSettings](https://github.com/JustArchiNET/ArchiSteamFarm/blob/main/ArchiSteamFarm.sln.DotSettings)** file that is being used by JetBrains products, namely **[ReSharper](https://www.jetbrains.com/resharper)** and **[Rider](https://www.jetbrains.com/rider)**. This one is the most complete config file that is also being loaded automatically when you're using ReSharper/Rider with our code.
 
-Personally we're using **[JetBrains Rider](https://www.jetbrains.com/rider)**, so no other action is needed after opening `ArchiSteamFarm.sln` solution. If you're using VS alone, it's probably a good idea to import our code style settings, although even editor config should be enough for majority of cases. If you can save us those few extra seconds cleaning up your code after accepting it, it would be great and surely improve overall code history.
+Since above files are used automatically, in vast majority of cases, you may just need to run some cleanup operation on files that you've edited, assuming your IDE doesn't do that automatically. If you can save us those few extra seconds cleaning up your code after accepting it, it would be great and surely improve overall code history.

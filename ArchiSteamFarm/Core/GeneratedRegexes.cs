@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,28 +26,20 @@ using System.Text.RegularExpressions;
 namespace ArchiSteamFarm.Core;
 
 internal static partial class GeneratedRegexes {
-	private const string CdKeyPattern = @"^[0-9A-Z]{4,7}-[0-9A-Z]{4,7}-[0-9A-Z]{4,7}(?:(?:-[0-9A-Z]{4,7})?(?:-[0-9A-Z]{4,7}))?$";
-	private const string DecimalPattern = @"[0-9\.,]+";
 	private const RegexOptions DefaultOptions = RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase;
-	private const string DigitsPattern = @"\d+";
-	private const string NonAsciiPattern = @"[^\u0000-\u007F]+";
 
-#if NETFRAMEWORK || NETSTANDARD
-	internal static Regex CdKey() => new(CdKeyPattern, DefaultOptions);
-	internal static Regex Decimal() => new(DecimalPattern, DefaultOptions);
-	internal static Regex Digits() => new(DigitsPattern, DefaultOptions);
-	internal static Regex NonAscii() => new(NonAsciiPattern, DefaultOptions);
-#else
-	[GeneratedRegex(CdKeyPattern, DefaultOptions)]
+	[GeneratedRegex(@"^[0-9A-Z]{4,7}-[0-9A-Z]{4,7}-[0-9A-Z]{4,7}(?:(?:-[0-9A-Z]{4,7})?(?:-[0-9A-Z]{4,7}))?$", DefaultOptions)]
 	internal static partial Regex CdKey();
 
-	[GeneratedRegex(DecimalPattern, DefaultOptions)]
+	[GeneratedRegex(@"[0-9\.,]+", DefaultOptions)]
 	internal static partial Regex Decimal();
 
-	[GeneratedRegex(DigitsPattern, DefaultOptions)]
+	[GeneratedRegex(@"\d+", DefaultOptions)]
 	internal static partial Regex Digits();
 
-	[GeneratedRegex(NonAsciiPattern, DefaultOptions)]
+	[GeneratedRegex(@"EResult (?<EResult>\d+)$", DefaultOptions)]
+	internal static partial Regex InventoryEResult();
+
+	[GeneratedRegex(@"[^\u0000-\u007F]+", DefaultOptions)]
 	internal static partial Regex NonAscii();
-#endif
 }

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,13 +32,14 @@ namespace ArchiSteamFarm.OfficialPlugins.MobileAuthenticator;
 
 internal sealed class MobileAuthenticatorHandler : ClientMsgHandler {
 	private readonly ArchiLogger ArchiLogger;
-	private readonly SteamUnifiedMessages.UnifiedService<ITwoFactor> UnifiedTwoFactorService;
+	private readonly TwoFactor UnifiedTwoFactorService;
 
 	internal MobileAuthenticatorHandler(ArchiLogger archiLogger, SteamUnifiedMessages steamUnifiedMessages) {
+		ArgumentNullException.ThrowIfNull(archiLogger);
 		ArgumentNullException.ThrowIfNull(steamUnifiedMessages);
 
-		ArchiLogger = archiLogger ?? throw new ArgumentNullException(nameof(archiLogger));
-		UnifiedTwoFactorService = steamUnifiedMessages.CreateService<ITwoFactor>();
+		ArchiLogger = archiLogger;
+		UnifiedTwoFactorService = steamUnifiedMessages.CreateService<TwoFactor>();
 	}
 
 	public override void HandleMsg(IPacketMsg packetMsg) => ArgumentNullException.ThrowIfNull(packetMsg);
@@ -46,9 +49,7 @@ internal sealed class MobileAuthenticatorHandler : ClientMsgHandler {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
 
-		if (string.IsNullOrEmpty(deviceID)) {
-			throw new ArgumentNullException(nameof(deviceID));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(deviceID);
 
 		if (Client == null) {
 			throw new InvalidOperationException(nameof(Client));
@@ -62,27 +63,20 @@ internal sealed class MobileAuthenticatorHandler : ClientMsgHandler {
 			authenticator_type = 1,
 			authenticator_time = Utilities.GetUnixTime(),
 			device_identifier = deviceID,
-			sms_phone_id = "1",
 			steamid = steamID
 		};
 
-		SteamUnifiedMessages.ServiceMethodResponse response;
+		SteamUnifiedMessages.ServiceMethodResponse<CTwoFactor_AddAuthenticator_Response> response;
 
 		try {
-			response = await UnifiedTwoFactorService.SendMessage(x => x.AddAuthenticator(request)).ToLongRunningTask().ConfigureAwait(false);
+			response = await UnifiedTwoFactorService.AddAuthenticator(request).ToLongRunningTask().ConfigureAwait(false);
 		} catch (Exception e) {
 			ArchiLogger.LogGenericWarningException(e);
 
 			return null;
 		}
 
-		if (response.Result != EResult.OK) {
-			return null;
-		}
-
-		CTwoFactor_AddAuthenticator_Response body = response.GetDeserializedResponse<CTwoFactor_AddAuthenticator_Response>();
-
-		return body;
+		return response.Result == EResult.OK ? response.Body : null;
 	}
 
 	internal async Task<CTwoFactor_FinalizeAddAuthenticator_Response?> FinalizeAuthenticator(ulong steamID, string activationCode, string authenticatorCode, ulong authenticatorTime) {
@@ -90,17 +84,9 @@ internal sealed class MobileAuthenticatorHandler : ClientMsgHandler {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
 		}
 
-		if (string.IsNullOrEmpty(activationCode)) {
-			throw new ArgumentNullException(nameof(activationCode));
-		}
-
-		if (string.IsNullOrEmpty(authenticatorCode)) {
-			throw new ArgumentNullException(nameof(authenticatorCode));
-		}
-
-		if (authenticatorTime <= 0) {
-			throw new ArgumentOutOfRangeException(nameof(authenticatorTime));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(activationCode);
+		ArgumentException.ThrowIfNullOrEmpty(authenticatorCode);
+		ArgumentOutOfRangeException.ThrowIfNegativeOrZero(authenticatorTime);
 
 		if (Client == null) {
 			throw new InvalidOperationException(nameof(Client));
@@ -117,22 +103,16 @@ internal sealed class MobileAuthenticatorHandler : ClientMsgHandler {
 			steamid = steamID
 		};
 
-		SteamUnifiedMessages.ServiceMethodResponse response;
+		SteamUnifiedMessages.ServiceMethodResponse<CTwoFactor_FinalizeAddAuthenticator_Response> response;
 
 		try {
-			response = await UnifiedTwoFactorService.SendMessage(x => x.FinalizeAddAuthenticator(request)).ToLongRunningTask().ConfigureAwait(false);
+			response = await UnifiedTwoFactorService.FinalizeAddAuthenticator(request).ToLongRunningTask().ConfigureAwait(false);
 		} catch (Exception e) {
 			ArchiLogger.LogGenericWarningException(e);
 
 			return null;
 		}
 
-		if (response.Result != EResult.OK) {
-			return null;
-		}
-
-		CTwoFactor_FinalizeAddAuthenticator_Response body = response.GetDeserializedResponse<CTwoFactor_FinalizeAddAuthenticator_Response>();
-
-		return body;
+		return response.Result == EResult.OK ? response.Body : null;
 	}
 }

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +37,7 @@ internal static class WebBrowserUtilities {
 		// We're going to create compressed stream and copy original content to it
 		MemoryStream compressionOutput = new();
 
-		(Stream compressionInput, string contentEncoding) = GetBestSupportedCompressionMethod(compressionOutput);
+		BrotliStream compressionInput = new(compressionOutput, CompressionLevel.SmallestSize, true);
 
 		await using (compressionInput.ConfigureAwait(false)) {
 			await content.CopyToAsync(compressionInput).ConfigureAwait(false);
@@ -51,18 +53,8 @@ internal static class WebBrowserUtilities {
 		}
 
 		// Inform the server that we're sending compressed data
-		result.Headers.ContentEncoding.Add(contentEncoding);
+		result.Headers.ContentEncoding.Add("br");
 
 		return result;
-	}
-
-	private static (Stream CompressionInput, string ContentEncoding) GetBestSupportedCompressionMethod(Stream output) {
-		ArgumentNullException.ThrowIfNull(output);
-
-#if NETFRAMEWORK || NETSTANDARD
-		return (new GZipStream(output, CompressionLevel.Optimal, true), "gzip");
-#else
-		return (new BrotliStream(output, CompressionLevel.SmallestSize, true), "br");
-#endif
 	}
 }

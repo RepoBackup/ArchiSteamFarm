@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,21 +21,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 using ArchiSteamFarm.Storage;
-using Newtonsoft.Json;
 
 namespace ArchiSteamFarm.IPC.Requests;
 
 [SuppressMessage("ReSharper", "ClassCannotBeInstantiated")]
 public sealed class ASFRequest {
-	/// <summary>
-	///     ASF's global config structure.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("ASF's global config structure")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public GlobalConfig GlobalConfig { get; private set; } = new();
+	public GlobalConfig GlobalConfig { get; private init; } = new();
 
 	[JsonConstructor]
 	private ASFRequest() { }

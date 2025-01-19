@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,32 +22,41 @@
 // limitations under the License.
 
 using System;
-using Newtonsoft.Json;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ArchiSteamFarm.Steam.Cards;
 
 public sealed class Game : IEquatable<Game> {
-	[JsonProperty]
+	[JsonInclude]
 	public uint AppID { get; }
 
-	[JsonProperty]
+	[JsonInclude]
 	public string GameName { get; }
 
 	internal readonly byte BadgeLevel;
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
+	[Required]
 	public ushort CardsRemaining { get; internal set; }
 
-	[JsonProperty]
+	[JsonInclude]
+	[JsonRequired]
+	[Required]
 	public float HoursPlayed { get; internal set; }
 
 	internal uint PlayableAppID { get; set; }
 
 	internal Game(uint appID, string gameName, float hoursPlayed, ushort cardsRemaining, byte badgeLevel) {
-		AppID = appID > 0 ? appID : throw new ArgumentOutOfRangeException(nameof(appID));
-		GameName = !string.IsNullOrEmpty(gameName) ? gameName : throw new ArgumentNullException(nameof(gameName));
-		HoursPlayed = hoursPlayed >= 0 ? hoursPlayed : throw new ArgumentOutOfRangeException(nameof(hoursPlayed));
-		CardsRemaining = cardsRemaining > 0 ? cardsRemaining : throw new ArgumentOutOfRangeException(nameof(cardsRemaining));
+		ArgumentOutOfRangeException.ThrowIfZero(appID);
+		ArgumentException.ThrowIfNullOrEmpty(gameName);
+		ArgumentOutOfRangeException.ThrowIfNegative(hoursPlayed);
+
+		AppID = appID;
+		GameName = gameName;
+		HoursPlayed = hoursPlayed;
+		CardsRemaining = cardsRemaining;
 		BadgeLevel = badgeLevel;
 
 		PlayableAppID = appID;

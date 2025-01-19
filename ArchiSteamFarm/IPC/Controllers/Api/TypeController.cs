@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,38 +23,35 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Text.Json.Serialization;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.IPC.Responses;
 using ArchiSteamFarm.Localization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/Type")]
 public sealed class TypeController : ArchiController {
-	/// <summary>
-	///     Fetches type info of given type.
-	/// </summary>
-	/// <remarks>
-	///     Type info is defined as a representation of given object with its fields and properties being assigned to a string value that defines their type.
-	/// </remarks>
+	[EndpointDescription("Type info is defined as a representation of given object with its fields and properties being assigned to a string value that defines their type")]
+	[EndpointSummary("Fetches type info of given type")]
 	[HttpGet("{type:required}")]
-	[ProducesResponseType(typeof(GenericResponse<TypeResponse>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<TypeResponse>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	[UnconditionalSuppressMessage("AssemblyLoadTrimming", "IL2075", Justification = "We don't care about trimmed assemblies, as we need it to work only with the known (used) ones")]
 	public ActionResult<GenericResponse> TypeGet(string type) {
-		if (string.IsNullOrEmpty(type)) {
-			throw new ArgumentNullException(nameof(type));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(type);
 
 		Type? targetType = WebUtilities.ParseType(type);
 
 		if (targetType == null) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, type)));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(type)));
 		}
 
 		string? baseType = targetType.BaseType?.GetUnifiedName();
@@ -63,29 +62,35 @@ public sealed class TypeController : ArchiController {
 
 		if (targetType.IsClass) {
 			foreach (FieldInfo field in targetType.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Where(static field => !field.IsPrivate)) {
-				JsonPropertyAttribute? jsonProperty = field.GetCustomAttribute<JsonPropertyAttribute>();
-
-				if (jsonProperty != null) {
-					string? unifiedName = field.FieldType.GetUnifiedName();
-
-					if (!string.IsNullOrEmpty(unifiedName)) {
-						// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-						body[jsonProperty.PropertyName ?? field.Name] = unifiedName!;
-					}
+				if (!field.IsDefined(typeof(JsonIncludeAttribute), false) || field.IsDefined(typeof(JsonExtensionDataAttribute), false)) {
+					continue;
 				}
+
+				string? unifiedName = field.FieldType.GetUnifiedName();
+
+				if (string.IsNullOrEmpty(unifiedName)) {
+					continue;
+				}
+
+				JsonPropertyNameAttribute? jsonPropertyName = field.GetCustomAttribute<JsonPropertyNameAttribute>();
+
+				body[jsonPropertyName?.Name ?? field.Name] = unifiedName;
 			}
 
 			foreach (PropertyInfo property in targetType.GetProperties(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public).Where(static property => property is { CanRead: true, GetMethod.IsPrivate: false })) {
-				JsonPropertyAttribute? jsonProperty = property.GetCustomAttribute<JsonPropertyAttribute>();
-
-				if (jsonProperty != null) {
-					string? unifiedName = property.PropertyType.GetUnifiedName();
-
-					if (!string.IsNullOrEmpty(unifiedName)) {
-						// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-						body[jsonProperty.PropertyName ?? property.Name] = unifiedName!;
-					}
+				if (!property.IsDefined(typeof(JsonIncludeAttribute), false) || property.IsDefined(typeof(JsonExtensionDataAttribute), false)) {
+					continue;
 				}
+
+				string? unifiedName = property.PropertyType.GetUnifiedName();
+
+				if (string.IsNullOrEmpty(unifiedName)) {
+					continue;
+				}
+
+				JsonPropertyNameAttribute? jsonPropertyName = property.GetCustomAttribute<JsonPropertyNameAttribute>();
+
+				body[jsonPropertyName?.Name ?? property.Name] = unifiedName;
 			}
 		} else if (targetType.IsEnum) {
 			Type enumType = Enum.GetUnderlyingType(targetType);
@@ -97,7 +102,7 @@ public sealed class TypeController : ArchiController {
 				if (string.IsNullOrEmpty(valueText)) {
 					ASF.ArchiLogger.LogNullError(valueText);
 
-					return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorObjectIsNull, nameof(valueText))));
+					return BadRequest(new GenericResponse(false, Strings.FormatErrorObjectIsNull(nameof(valueText))));
 				}
 
 				string? valueObjText = Convert.ChangeType(value, enumType, CultureInfo.InvariantCulture)?.ToString();
@@ -106,10 +111,7 @@ public sealed class TypeController : ArchiController {
 					continue;
 				}
 
-				// ReSharper disable RedundantSuppressNullableWarningExpression - required for .NET Framework
-				body[valueText!] = valueObjText!;
-
-				// ReSharper restore RedundantSuppressNullableWarningExpression - required for .NET Framework
+				body[valueText] = valueObjText;
 			}
 		}
 

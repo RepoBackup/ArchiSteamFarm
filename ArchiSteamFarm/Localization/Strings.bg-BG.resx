@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -86,9 +84,7 @@
 		<value>Изключение: {0}() {1} StackTrace:{2}</value>
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
-	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Изключване при код за грешка различен от 0 (нула)!</value>
-	</data>
+	
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Провалена заявка: {0}</value>
 		<comment>{0} will be replaced by URL of the request</comment>
@@ -186,6 +182,10 @@
 	<data name="UpdateVersionInfo" xml:space="preserve">
 		<value>Версия на компютъра Ви: {0} | Версия на сървъра: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
+	</data>
+	<data name="UserInputDeviceConfirmation" xml:space="preserve">
+		<value>Моля, проверете мобилното си приложение Steam, трябва да сте получили известие за одобрение за влизане. Въведете Y, ако сте получили и одобрили известието, N, ако искате да предоставите код вместо това: </value>
+		<comment>Please note that this translation should end with space</comment>
 	</data>
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Моля въведете Вашият 2FA код от Steam authenticator приложението: </value>
@@ -481,9 +481,6 @@
 	<data name="BotHeartBeatFailed" xml:space="preserve">
 		<value>Неуспешно прекъсване на връзката на клиента. Премахва се този бот!</value>
 	</data>
-	<data name="BotSteamDirectoryInitializationFailed" xml:space="preserve">
-		<value>Неуспешно стартиране на SteamDirectory: свързването с мрежата на Steam може да отнеме много повече време от обичайното!</value>
-	</data>
 	<data name="BotStopping" xml:space="preserve">
 		<value>Спиране…</value>
 	</data>
@@ -547,14 +544,6 @@
 		<value>Текущо използване на паметта: {0} MB.
 Работно време на процеса: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
-	</data>
-	<data name="ClearingDiscoveryQueue" xml:space="preserve">
-		<value>Изчистване на предложенията на Steam #{0}...</value>
-		<comment>{0} will be replaced by queue number</comment>
-	</data>
-	<data name="DoneClearingDiscoveryQueue" xml:space="preserve">
-		<value>Завърши изчистването на предложенията на Steam #{0}.</value>
-		<comment>{0} will be replaced by queue number</comment>
 	</data>
 	<data name="BotOwnsOverviewPerGame" xml:space="preserve">
 		<value>{0}/{1} ботовете вече притежават игра {2}.</value>
@@ -684,26 +673,11 @@
 		<value>{0} config file ще бъде прехвърлен на последния синтаксис...</value>
 		<comment>{0} will be replaced with the relative path to the affected config file</comment>
 	</data>
-	<data name="WarningWeakIPCPassword" xml:space="preserve">
-		<value>Вашата IPC парола изглежда много слаба. Помислете за избиране на по-сложна за увеличаване на сигурността. Детайли: {0}</value>
-		<comment>{0} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakSteamPassword" xml:space="preserve">
-		<value>Вашата Steam парола за {0} изглежда много слаба. Помислете за избиране на по-сложна за увеличаване на сигурността. Детайли: {1}</value>
-		<comment>{0} will be replaced by the affected bot name, {1} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakCryptKey" xml:space="preserve">
-		<value>Вашият криптиращ ключ изглежда много слаб. Помислете за избиране на по-сложна за увеличаване на сигурността. Детайли: {0}</value>
-		<comment>{0} will be replaced by additional details about the encryption key being considered weak</comment>
-	</data>
 	<data name="WarningTooShortCryptKey" xml:space="preserve">
 		<value>Вашият криптиращ ключ е много къс. Препоръчваме да ползвате някой, който е поне {0} байта (символа) голям.</value>
 		<comment>{0} will be replaced by the number of bytes (characters) recommended</comment>
 	</data>
-	<data name="WarningDefaultCryptKeyUsedForHashing" xml:space="preserve">
-		<value>Ползвате {0} настройка от {1} стойност, но не сте осигурили персонализиран крипто-ключ. Трябва да осигурите персонализиран крипто-ключ за увеличена защита.</value>
-		<comment>{0} will be replaced by the name of a particular setting (e.g. "SCrypt"), {1} will be replaced by the name of the property (e.g. "IPCPassword")</comment>
-	</data>
+	
 	<data name="WarningDefaultCryptKeyUsedForEncryption" xml:space="preserve">
 		<value>Ползвате {0} настройка от {1} стойност, но не сте осигурили персонализиран крипто-ключ. Това напълно нарушава защитата, тъй като ASF е принуден да ползва собствен (познат) ключ. Трябва да осигурите персонализиран крипто-ключ, за да ползвате предлаганата защита от тези настройки.</value>
 		<comment>{0} will be replaced by the name of a particular setting (e.g. "AES"), {1} will be replaced by the name of the property (e.g. "SteamPassword")</comment>
@@ -723,6 +697,7 @@
 	<data name="ChecksumMissing" xml:space="preserve">
 		<value>Отдалечения сървър не знае нищо за версията до която се опитвате да ъпгрейднете. Подобна ситуация е възможна ако версията е публикувана скоро - отказване да се продължи с ъпдейта като допълнителна мярка за сигурност.</value>
 	</data>
+	
 	<data name="ChecksumWrong" xml:space="preserve">
 		<value>Отдалечения сървър отговори с различен checksum, това може да показва корумпирано сваляне или MITM атака - отказване да се продължи с ъпдейта!</value>
 	</data>
@@ -741,4 +716,21 @@
 		<value>Опитахте да използвате платена функция {0}, но нямате зададен валиден LicenseID в глобалната конфигурация на ASF. Моля, прегледайте конфигурацията си, тъй като функционалността няма да работи без допълнителни подробности.</value>
 		<comment>{0} will be replaced by feature name (e.g. MatchActively)</comment>
 	</data>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 </root>

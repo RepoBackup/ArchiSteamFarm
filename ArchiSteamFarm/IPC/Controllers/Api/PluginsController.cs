@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,20 +24,57 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading.Tasks;
+using ArchiSteamFarm.IPC.Requests;
 using ArchiSteamFarm.IPC.Responses;
+using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.Plugins;
 using ArchiSteamFarm.Plugins.Interfaces;
+using ArchiSteamFarm.Steam.Interaction;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/Plugins")]
 public sealed class PluginsController : ArchiController {
+	[EndpointSummary("Gets active plugins loaded into the process")]
 	[HttpGet]
-	[ProducesResponseType(typeof(GenericResponse<IReadOnlyCollection<IPlugin>>), (int) HttpStatusCode.OK)]
-	public ActionResult<GenericResponse<IReadOnlyCollection<IPlugin>>> PluginsGet() {
-		IReadOnlyCollection<IPlugin> activePlugins = PluginsCore.ActivePlugins ?? (IReadOnlyCollection<IPlugin>) Array.Empty<IPlugin>();
+	[ProducesResponseType<GenericResponse<IReadOnlyCollection<IPlugin>>>((int) HttpStatusCode.OK)]
+	public ActionResult<GenericResponse<IReadOnlyCollection<IPlugin>>> PluginsGet([FromQuery] bool official = true, [FromQuery] bool custom = true) {
+		HashSet<IPlugin> result = [];
 
-		return Ok(new GenericResponse<IReadOnlyCollection<IPlugin>>(activePlugins));
+		foreach (IPlugin plugin in PluginsCore.ActivePlugins) {
+			if (plugin is OfficialPlugin) {
+				if (official) {
+					result.Add(plugin);
+				}
+			} else {
+				if (custom) {
+					result.Add(plugin);
+				}
+			}
+		}
+
+		return Ok(new GenericResponse<IReadOnlyCollection<IPlugin>>(result));
+	}
+
+	[EndpointSummary("Makes ASF update selected plugins")]
+	[HttpPost("Update")]
+	[ProducesResponseType<GenericResponse<string>>((int) HttpStatusCode.OK)]
+	public async Task<ActionResult<GenericResponse<string>>> UpdatePost([FromBody] PluginUpdateRequest request) {
+		ArgumentNullException.ThrowIfNull(request);
+
+		if (request.Channel.HasValue && !Enum.IsDefined(request.Channel.Value)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(request.Channel))));
+		}
+
+		(bool success, string? message) = await Actions.UpdatePlugins(request.Channel, request.Plugins, request.Forced).ConfigureAwait(false);
+
+		if (string.IsNullOrEmpty(message)) {
+			message = success ? Strings.Success : Strings.WarningFailed;
+		}
+
+		return Ok(new GenericResponse<string>(success, message));
 	}
 }

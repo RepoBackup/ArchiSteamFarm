@@ -3,7 +3,7 @@ WantedBy=multi-user.target
 
 [Service]
 EnvironmentFile=-/etc/asf/%i
-ExecStart=/home/%i/ArchiSteamFarm/ArchiSteamFarm --no-restart --process-required --service --system-required
+ExecStart=/home/%i/ArchiSteamFarm/ArchiSteamFarm --no-restart --service --system-required
 Restart=on-success
 RestartSec=1s
 SyslogIdentifier=asf-%i
@@ -18,6 +18,7 @@ PrivateDevices=yes
 PrivateIPC=yes
 PrivateMounts=yes
 PrivateUsers=yes
+ProcSubset=pid
 ProtectClock=yes
 ProtectControlGroups=yes
 ProtectHome=read-only
@@ -29,19 +30,15 @@ ProtectProc=invisible
 ProtectSystem=strict
 ReadWritePaths=/home/%i/ArchiSteamFarm /tmp
 RemoveIPC=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
+SecureBits=noroot-locked
 SystemCallArchitectures=native
+SystemCallFilter=@system-service mincore
+SystemCallFilter=~@privileged
 UMask=0077
-
-# TODO: Requires systemd v247+ due to https://github.com/systemd/systemd/issues/16666 and https://github.com/JustArchiNET/ArchiSteamFarm/issues/2739
-# Since we don't want to enforce OS upgrade for everybody just yet, it's commented out for now
-# We'll likely enforce it when .NET switches to Debian 11+ requirement
-#SecureBits=noroot-locked
-#SystemCallFilter=@system-service
-#SystemCallFilter=~@privileged
 
 [Unit]
 After=network.target

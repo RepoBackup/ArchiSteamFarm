@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -71,7 +69,7 @@
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin")</comment>
 	</data>
 	<data name="PluginInitializedAndEnabled" xml:space="preserve">
-		<value>O {0} foi inicializado com sucesso, agradecemos a sua ajuda. O primeiro envio ocorrerá em aproximadamente {1}.</value>
+		<value>{0} foi inicializado com sucesso, obrigado desde já pela sua ajuda. O primeiro envio ocorrerá em aproximadamente {1}.</value>
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin"), {1} will be replaced by translated TimeSpan string (such as "53 minutes")</comment>
 	</data>
 	<data name="FileCouldNotBeLoadedFreshInit" xml:space="preserve">
@@ -109,10 +107,7 @@
 		<value>Recuperamos um total de {0} informações de aplicativos.</value>
 		<comment>{0} will be replaced by the number (count this batch) of app infos retrieved</comment>
 	</data>
-	<data name="BotFinishedRetrievingDepotKeys" xml:space="preserve">
-		<value>{0} de {1} chaves do depósito recuperadas com sucesso.</value>
-		<comment>{0} will be replaced by the number (count this batch) of depot keys that were successfully retrieved, {1} will be replaced by the number (count this batch) of depot keys that were supposed to be retrieved</comment>
-	</data>
+	
 	<data name="BotFinishedRetrievingTotalDepots" xml:space="preserve">
 		<value>Recuperamos códigos de acesso para {0} aplicativos.</value>
 		<comment>{0} will be replaced by the number (total count) of apps retrieved</comment>

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,33 +23,38 @@
 
 using System;
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using JetBrains.Annotations;
-using Newtonsoft.Json;
 
 namespace ArchiSteamFarm.Storage;
 
 public sealed class PackageData {
-	[JsonProperty]
-	public ImmutableHashSet<uint>? AppIDs { get; private set; }
+	[JsonInclude]
+	public ImmutableHashSet<uint>? AppIDs { get; private init; }
 
-	[JsonProperty(Required = Required.Always)]
-	public uint ChangeNumber { get; private set; }
+	[JsonInclude]
+	[JsonRequired]
+	public uint ChangeNumber { get; private init; }
 
-	[JsonProperty(Required = Required.Always)]
-	public DateTime ValidUntil { get; private set; }
+	[JsonInclude]
+	public ImmutableHashSet<string>? OnlyAllowRunInCountries { get; private init; }
 
-	internal PackageData(uint changeNumber, DateTime validUntil, ImmutableHashSet<uint>? appIDs = null) {
-		if (changeNumber == 0) {
-			throw new ArgumentOutOfRangeException(nameof(changeNumber));
-		}
+	[JsonInclude]
+	public ImmutableHashSet<string>? ProhibitRunInCountries { get; private init; }
 
-		if (validUntil == DateTime.MinValue) {
-			throw new ArgumentOutOfRangeException(nameof(validUntil));
-		}
+	[JsonInclude]
+	[JsonRequired]
+	public DateTime ValidUntil { get; private init; }
+
+	internal PackageData(uint changeNumber, DateTime validUntil, ImmutableHashSet<uint>? appIDs = null, ImmutableHashSet<string>? onlyAllowRunInCountries = null, ImmutableHashSet<string>? prohibitRunInCountries = null) {
+		ArgumentOutOfRangeException.ThrowIfZero(changeNumber);
+		ArgumentOutOfRangeException.ThrowIfEqual(validUntil, DateTime.MinValue);
 
 		ChangeNumber = changeNumber;
 		ValidUntil = validUntil;
 		AppIDs = appIDs;
+		OnlyAllowRunInCountries = onlyAllowRunInCountries;
+		ProhibitRunInCountries = prohibitRunInCountries;
 	}
 
 	[JsonConstructor]
@@ -55,4 +62,10 @@ public sealed class PackageData {
 
 	[UsedImplicitly]
 	public bool ShouldSerializeAppIDs() => AppIDs is { IsEmpty: false };
+
+	[UsedImplicitly]
+	public bool ShouldSerializeOnlyAllowRunInCountries() => OnlyAllowRunInCountries is { IsEmpty: false };
+
+	[UsedImplicitly]
+	public bool ShouldSerializeProhibitRunInCountries() => ProhibitRunInCountries is { IsEmpty: false };
 }

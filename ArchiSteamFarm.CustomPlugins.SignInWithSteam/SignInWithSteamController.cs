@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +22,6 @@
 // limitations under the License.
 
 using System;
-using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -41,20 +42,17 @@ namespace ArchiSteamFarm.CustomPlugins.SignInWithSteam;
 [Route("/Api/Bot/{botName:required}/SignInWithSteam")]
 public sealed class SignInWithSteamController : ArchiController {
 	[HttpPost]
-	[ProducesResponseType(typeof(GenericResponse<SignInWithSteamResponse>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.ServiceUnavailable)]
+	[ProducesResponseType<GenericResponse<SignInWithSteamResponse>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.ServiceUnavailable)]
 	public async Task<ActionResult<GenericResponse>> Post(string botName, [FromBody] SignInWithSteamRequest request) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
-
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 		ArgumentNullException.ThrowIfNull(request);
 
 		Bot? bot = Bot.GetBot(botName);
 
 		if (bot == null) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botName)));
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botName)));
 		}
 
 		if (!bot.IsConnectedAndLoggedOn) {
@@ -65,7 +63,7 @@ public sealed class SignInWithSteamController : ArchiController {
 		using HtmlDocumentResponse? challengeResponse = await bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(request.RedirectURL).ConfigureAwait(false);
 
 		if (challengeResponse?.Content == null) {
-			return StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorRequestFailedTooManyTimes, WebBrowser.MaxTries)));
+			return StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false, Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries)));
 		}
 
 		IAttr? paramsNode = challengeResponse.Content.SelectSingleNode<IAttr>("//input[@name='openidparams']/@value");
@@ -73,7 +71,7 @@ public sealed class SignInWithSteamController : ArchiController {
 		if (paramsNode == null) {
 			ASF.ArchiLogger.LogNullError(paramsNode);
 
-			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorObjectIsNull, nameof(paramsNode))));
+			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, Strings.FormatErrorObjectIsNull(nameof(paramsNode))));
 		}
 
 		string paramsValue = paramsNode.Value;
@@ -81,7 +79,7 @@ public sealed class SignInWithSteamController : ArchiController {
 		if (string.IsNullOrEmpty(paramsValue)) {
 			ASF.ArchiLogger.LogNullError(paramsValue);
 
-			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorObjectIsNull, nameof(paramsValue))));
+			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, Strings.FormatErrorObjectIsNull(nameof(paramsValue))));
 		}
 
 		IAttr? nonceNode = challengeResponse.Content.SelectSingleNode<IAttr>("//input[@name='nonce']/@value");
@@ -89,7 +87,7 @@ public sealed class SignInWithSteamController : ArchiController {
 		if (nonceNode == null) {
 			ASF.ArchiLogger.LogNullError(nonceNode);
 
-			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorObjectIsNull, nameof(nonceNode))));
+			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, Strings.FormatErrorObjectIsNull(nameof(nonceNode))));
 		}
 
 		string nonceValue = nonceNode.Value;
@@ -97,7 +95,7 @@ public sealed class SignInWithSteamController : ArchiController {
 		if (string.IsNullOrEmpty(nonceValue)) {
 			ASF.ArchiLogger.LogNullError(nonceValue);
 
-			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorObjectIsNull, nameof(nonceValue))));
+			return StatusCode((int) HttpStatusCode.InternalServerError, new GenericResponse(false, Strings.FormatErrorObjectIsNull(nameof(nonceValue))));
 		}
 
 		Uri loginRequest = new(ArchiWebHandler.SteamCommunityURL, "/openid/login");
@@ -117,6 +115,6 @@ public sealed class SignInWithSteamController : ArchiController {
 		// Accept OpenID request presented and follow redirection back to the data we initially expected
 		BasicResponse? loginResponse = await bot.ArchiWebHandler.WebBrowser.UrlPost(loginRequest, data: data, requestOptions: WebBrowser.ERequestOptions.ReturnRedirections).ConfigureAwait(false);
 
-		return loginResponse != null ? Ok(new GenericResponse<SignInWithSteamResponse>(new SignInWithSteamResponse(loginResponse.FinalUri))) : StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorRequestFailedTooManyTimes, WebBrowser.MaxTries)));
+		return loginResponse != null ? Ok(new GenericResponse<SignInWithSteamResponse>(new SignInWithSteamResponse(loginResponse.FinalUri))) : StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false, Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries)));
 	}
 }

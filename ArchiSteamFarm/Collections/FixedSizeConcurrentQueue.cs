@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,43 +25,40 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using ArchiSteamFarm.Core;
+using JetBrains.Annotations;
 
 namespace ArchiSteamFarm.Collections;
 
-internal sealed class FixedSizeConcurrentQueue<T> : IEnumerable<T> {
+internal sealed class FixedSizeConcurrentQueue<T> : IEnumerable<T> where T : notnull {
 	private readonly ConcurrentQueue<T> BackingQueue = new();
 
 	internal byte MaxCount {
-		get => BackingMaxCount;
+		get;
 
 		set {
-			if (value == 0) {
-				ASF.ArchiLogger.LogNullError(value);
+			ArgumentOutOfRangeException.ThrowIfZero(value);
 
-				return;
-			}
-
-			BackingMaxCount = value;
+			field = value;
 
 			Resize();
 		}
 	}
 
-	private byte BackingMaxCount;
-
 	internal FixedSizeConcurrentQueue(byte maxCount) {
-		if (maxCount == 0) {
-			throw new ArgumentNullException(nameof(maxCount));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(maxCount);
 
 		MaxCount = maxCount;
 	}
 
+	[MustDisposeResource]
 	public IEnumerator<T> GetEnumerator() => BackingQueue.GetEnumerator();
+
+	[MustDisposeResource]
 	IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
 	internal void Enqueue(T obj) {
+		ArgumentNullException.ThrowIfNull(obj);
+
 		BackingQueue.Enqueue(obj);
 
 		Resize();

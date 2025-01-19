@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -89,9 +87,7 @@ StackTrace:
 {2}</value>
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
-	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Poistutaan muulla kuin 0 virhekoodilla!</value>
-	</data>
+	
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Pyyntö epäonnistuu: {0}</value>
 		<comment>{0} will be replaced by URL of the request</comment>
@@ -189,6 +185,10 @@ StackTrace:
 	<data name="UpdateVersionInfo" xml:space="preserve">
 		<value>Paikallinen versio: {0} | Etäkäyttöversio: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
+	</data>
+	<data name="UserInputDeviceConfirmation" xml:space="preserve">
+		<value>Ole hyvä ja tarkista Steam-mobiilisovellus, sinun olisi pitänyt saada kirjautumisen hyväksymisilmoitus. Kirjoita Y jos olet vastaanottanut ilmoituksen ja hyväksynyt sen, N jos haluat antaa koodin: </value>
+		<comment>Please note that this translation should end with space</comment>
 	</data>
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Syötä 2FA-koodi Steam-varmennussovelluksesta: </value>
@@ -484,9 +484,6 @@ StackTrace:
 	<data name="BotHeartBeatFailed" xml:space="preserve">
 		<value>Yhteyden katkaisu clienttiin epäonnistui. Hylätään tämä botti instanssi!</value>
 	</data>
-	<data name="BotSteamDirectoryInitializationFailed" xml:space="preserve">
-		<value>Yhteys SteamDirectoryyn epäonnistui: Steam-verkkoon yhdistäminen saattaa kestää paljon kauemmin!</value>
-	</data>
 	<data name="BotStopping" xml:space="preserve">
 		<value>Pysäytetään...</value>
 	</data>
@@ -550,14 +547,6 @@ StackTrace:
 		<value>Nykyinen muistinkäyttö: {0} MB.
 Prosessin käyttöaika: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
-	</data>
-	<data name="ClearingDiscoveryQueue" xml:space="preserve">
-		<value>Tyhjennetään Steamin discovery-jonoa #{0}...</value>
-		<comment>{0} will be replaced by queue number</comment>
-	</data>
-	<data name="DoneClearingDiscoveryQueue" xml:space="preserve">
-		<value>Steamin discovery-jono #{0} tyhjennetty.</value>
-		<comment>{0} will be replaced by queue number</comment>
 	</data>
 	<data name="BotOwnsOverviewPerGame" xml:space="preserve">
 		<value>{0}/{1} bottia omistaa jo pelin {2}.</value>
@@ -687,26 +676,11 @@ Prosessin käyttöaika: {1}</value>
 		<value>{0} asetustiedosto muutetaan uusimpaan syntaksiin...</value>
 		<comment>{0} will be replaced with the relative path to the affected config file</comment>
 	</data>
-	<data name="WarningWeakIPCPassword" xml:space="preserve">
-		<value>IPC-salasanasi näyttää olevan heikko. Harkitse vahvemman salasanan valitsemista turvallisuuden parantamiseksi. Yksityiskohdat: {0}</value>
-		<comment>{0} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakSteamPassword" xml:space="preserve">
-		<value>Steam-salasanasi '{0}' näyttää olevan heikko. Harkitse vahvemman salasanan valitsemista turvallisuuden lisäämiseksi. Yksityiskohdat: {1}</value>
-		<comment>{0} will be replaced by the affected bot name, {1} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakCryptKey" xml:space="preserve">
-		<value>Salausavaimesi näyttää olevan heikko. Harkitse vahvemman valintaa turvallisuuden parantamiseksi. Yksityiskohdat: {0}</value>
-		<comment>{0} will be replaced by additional details about the encryption key being considered weak</comment>
-	</data>
 	<data name="WarningTooShortCryptKey" xml:space="preserve">
 		<value>Salausavaimesi on liian lyhyt. Suosittelemme käyttämään salausavainta, joka on vähintään {0} tavua (merkkiä) pitkä.</value>
 		<comment>{0} will be replaced by the number of bytes (characters) recommended</comment>
 	</data>
-	<data name="WarningDefaultCryptKeyUsedForHashing" xml:space="preserve">
-		<value>Käytät ominaisuuden {1} asetusta {0}, mutta et antanut mukautettua --cryptkey -argumenttia. Sinun pitäisi antaa mukautettu --cryptkey lisäturvallisuuden takaamiseksi.</value>
-		<comment>{0} will be replaced by the name of a particular setting (e.g. "SCrypt"), {1} will be replaced by the name of the property (e.g. "IPCPassword")</comment>
-	</data>
+	
 	<data name="WarningDefaultCryptKeyUsedForEncryption" xml:space="preserve">
 		<value>Käytät ominaisuuden {1} asetusta {0}, mutta et antanut mukautettua --cryptkey -argumenttia. Tämä tekee suojauksen täysin tyhjäksi, koska ASF joutuu käyttämään omaa (tunnettua) avaintaan. Sinun tulisi antaa mukautettu --cryptkey tämän asetuksen turvallisuushyöydyn saavuttamiseksi.</value>
 		<comment>{0} will be replaced by the name of a particular setting (e.g. "AES"), {1} will be replaced by the name of the property (e.g. "SteamPassword")</comment>
@@ -726,6 +700,7 @@ Prosessin käyttöaika: {1}</value>
 	<data name="ChecksumMissing" xml:space="preserve">
 		<value>Etäpalvelin ei tiedä mitään julkaisusta, johon olemme päivittämässä. Tämä tilanne on mahdollinen, jos julkistaminen on hiljattain julkaistu - kieltäydytään jatkamasta päivitystä ylimääräisenä turvatoimenpiteenä.</value>
 	</data>
+	
 	<data name="ChecksumWrong" xml:space="preserve">
 		<value>Etäpalvelin on vastannut eri tarkistussummalla, mikä saattaa merkitä viallista latausta tai MITM-hyökkäystä, kieltäydytään jatkamasta päivitystä!</value>
 	</data>
@@ -744,4 +719,24 @@ Prosessin käyttöaika: {1}</value>
 		<value>Olet yrittänyt käyttää maksullista ominaisuutta {0}, mutta sinulla ei ole voimassa olevaa ASF:n yleisissä asetuksissa olevaa lisenssitunnusta. Tarkista asetukset, koska toiminto ei toimi ilman lisätietoja.</value>
 		<comment>{0} will be replaced by feature name (e.g. MatchActively)</comment>
 	</data>
+	<data name="WarningRegionRestrictedPackage" xml:space="preserve">
+		<value>ASF ei pysty pelaamaan sovellusta {0}, koska sillä on aluekohtainen rajoitus maassa {1}, joka kestää {2} asti.</value>
+		<comment>{0} will be replaced by app ID (number), {1} will be replaced by short country code (string, such as "PL"), {2} will be replaced by human-readable date (string).</comment>
+	</data>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 </root>

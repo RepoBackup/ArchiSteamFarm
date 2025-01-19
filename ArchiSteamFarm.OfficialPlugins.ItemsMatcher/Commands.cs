@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +24,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
@@ -80,12 +81,20 @@ internal static class Commands {
 			return access > EAccess.None ? bot.Commands.FormatBotResponse(Strings.ErrorAccessDenied) : null;
 		}
 
-		if ((ASF.GlobalConfig?.LicenseID == null) || (ASF.GlobalConfig.LicenseID == Guid.Empty)) {
-			return bot.Commands.FormatBotResponse(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(ASF.GlobalConfig.LicenseID)));
+		if (!bot.IsConnectedAndLoggedOn) {
+			return bot.Commands.FormatBotResponse(Strings.BotNotConnected);
 		}
 
-		if (!bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.MatchActively) || !ItemsMatcherPlugin.RemoteCommunications.TryGetValue(bot, out RemoteCommunication? remoteCommunication)) {
-			return bot.Commands.FormatBotResponse(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(BotConfig.ETradingPreferences.MatchActively)));
+		if (bot.BotConfig.TradingPreferences.HasFlag(BotConfig.ETradingPreferences.MatchEverything)) {
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(BotConfig.ETradingPreferences.MatchEverything)));
+		}
+
+		if ((ASF.GlobalConfig?.LicenseID == null) || (ASF.GlobalConfig.LicenseID == Guid.Empty)) {
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(ASF.GlobalConfig.LicenseID)));
+		}
+
+		if (!ItemsMatcherPlugin.RemoteCommunications.TryGetValue(bot, out RemoteCommunication? remoteCommunication)) {
+			return bot.Commands.FormatBotResponse(Strings.FormatWarningFailedWithError(nameof(remoteCommunication)));
 		}
 
 		remoteCommunication.TriggerMatchActivelyEarlier();
@@ -98,9 +107,7 @@ internal static class Commands {
 			throw new InvalidEnumArgumentException(nameof(access), (int) access, typeof(EAccess));
 		}
 
-		if (string.IsNullOrEmpty(botNames)) {
-			throw new ArgumentNullException(nameof(botNames));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
 
 		if ((steamID != 0) && !new SteamID(steamID).IsIndividualAccount) {
 			throw new ArgumentOutOfRangeException(nameof(steamID));
@@ -109,12 +116,12 @@ internal static class Commands {
 		HashSet<Bot>? bots = Bot.GetBots(botNames);
 
 		if ((bots == null) || (bots.Count == 0)) {
-			return access >= EAccess.Owner ? Steam.Interaction.Commands.FormatStaticResponse(string.Format(CultureInfo.CurrentCulture, Strings.BotNotFound, botNames)) : null;
+			return access >= EAccess.Owner ? Steam.Interaction.Commands.FormatStaticResponse(Strings.FormatBotNotFound(botNames)) : null;
 		}
 
 		IList<string?> results = await Utilities.InParallel(bots.Select(bot => Task.Run(() => ResponseMatch(Steam.Interaction.Commands.GetProxyAccess(bot, access, steamID), bot)))).ConfigureAwait(false);
 
-		List<string> responses = new(results.Where(static result => !string.IsNullOrEmpty(result))!);
+		List<string> responses = [..results.Where(static result => !string.IsNullOrEmpty(result))!];
 
 		return responses.Count > 0 ? string.Join(Environment.NewLine, responses) : null;
 	}

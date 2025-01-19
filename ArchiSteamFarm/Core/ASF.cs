@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +23,8 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -30,11 +32,11 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Helpers;
 using ArchiSteamFarm.IPC;
+using ArchiSteamFarm.IPC.Controllers.Api;
 using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.NLog;
 using ArchiSteamFarm.Plugins;
@@ -42,10 +44,11 @@ using ArchiSteamFarm.Steam;
 using ArchiSteamFarm.Steam.Integration;
 using ArchiSteamFarm.Storage;
 using ArchiSteamFarm.Web;
+using ArchiSteamFarm.Web.GitHub;
+using ArchiSteamFarm.Web.GitHub.Data;
 using ArchiSteamFarm.Web.Responses;
 using JetBrains.Annotations;
 using SteamKit2;
-using SteamKit2.Discovery;
 
 namespace ArchiSteamFarm.Core;
 
@@ -70,15 +73,17 @@ public static class ASF {
 
 	internal static readonly SemaphoreSlim OpenConnectionsSemaphore = new(WebBrowser.MaxConnections, WebBrowser.MaxConnections);
 
+	internal static string DebugDirectory => Path.Combine(SharedInfo.DebugDirectory, OS.ProcessStartTime.ToString("yyyy-MM-dd-THH-mm-ss", CultureInfo.InvariantCulture));
+
 	internal static ICrossProcessSemaphore? ConfirmationsSemaphore { get; private set; }
 	internal static ICrossProcessSemaphore? GiftsSemaphore { get; private set; }
 	internal static ICrossProcessSemaphore? InventorySemaphore { get; private set; }
 	internal static ICrossProcessSemaphore? LoginRateLimitingSemaphore { get; private set; }
 	internal static ICrossProcessSemaphore? LoginSemaphore { get; private set; }
 	internal static ICrossProcessSemaphore? RateLimitingSemaphore { get; private set; }
-	internal static ImmutableDictionary<Uri, (ICrossProcessSemaphore RateLimitingSemaphore, SemaphoreSlim OpenConnectionsSemaphore)>? WebLimitingSemaphores { get; private set; }
+	internal static FrozenDictionary<Uri, (ICrossProcessSemaphore RateLimitingSemaphore, SemaphoreSlim OpenConnectionsSemaphore)>? WebLimitingSemaphores { get; private set; }
 
-	private static readonly ImmutableHashSet<string> AssembliesNeededBeforeUpdate = ImmutableHashSet.Create("System.IO.Pipes");
+	private static readonly FrozenSet<string> AssembliesNeededBeforeUpdate = new HashSet<string>(1, StringComparer.Ordinal) { "System.IO.Pipes" }.ToFrozenSet(StringComparer.Ordinal);
 	private static readonly SemaphoreSlim UpdateSemaphore = new(1, 1);
 
 	private static Timer? AutoUpdatesTimer;
@@ -102,30 +107,38 @@ public static class ASF {
 		return fileType switch {
 			EFileType.Config => Path.Combine(SharedInfo.ConfigDirectory, SharedInfo.GlobalConfigFileName),
 			EFileType.Database => Path.Combine(SharedInfo.ConfigDirectory, SharedInfo.GlobalDatabaseFileName),
-			_ => throw new ArgumentOutOfRangeException(nameof(fileType))
+			EFileType.Crash => Path.Combine(SharedInfo.ConfigDirectory, SharedInfo.GlobalCrashFileName),
+			_ => throw new InvalidOperationException(nameof(fileType))
 		};
 	}
 
-	internal static async Task Init() {
+	internal static async Task<bool> Init() {
 		if (GlobalConfig == null) {
 			throw new InvalidOperationException(nameof(GlobalConfig));
 		}
 
-		if (!PluginsCore.InitPlugins()) {
-			await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
-		}
-
 		WebBrowser = new WebBrowser(ArchiLogger, GlobalConfig.WebProxy, true);
 
+		if (!await PluginsCore.InitPlugins().ConfigureAwait(false)) {
+			return false;
+		}
+
 		await UpdateAndRestart().ConfigureAwait(false);
+
+		if (!Program.IgnoreUnsupportedEnvironment && !await ProtectAgainstCrashes().ConfigureAwait(false)) {
+			ArchiLogger.LogFatalError(Strings.ErrorTooManyCrashes);
+
+			return true;
+		}
+
+		Program.AllowCrashFileRemoval = true;
 
 		await PluginsCore.OnASFInitModules(GlobalConfig.AdditionalProperties).ConfigureAwait(false);
 		await InitRateLimiters().ConfigureAwait(false);
 
 		StringComparer botsComparer = await PluginsCore.GetBotsComparer().ConfigureAwait(false);
-		IMachineInfoProvider? customMachineInfoProvider = await PluginsCore.GetCustomMachineInfoProvider().ConfigureAwait(false);
 
-		Bot.Init(botsComparer, customMachineInfoProvider);
+		Bot.Init(botsComparer);
 
 		if (!Program.Service && !GlobalConfig.Headless && !Console.IsInputRedirected) {
 			Logging.StartInteractiveConsole();
@@ -144,12 +157,12 @@ public static class ASF {
 		if (Program.ConfigWatch) {
 			InitConfigWatchEvents();
 		}
+
+		return true;
 	}
 
 	internal static bool IsValidBotName(string botName) {
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		if (botName[0] == '.') {
 			return false;
@@ -178,218 +191,27 @@ public static class ASF {
 		}
 	}
 
-	internal static async Task<Version?> Update(GlobalConfig.EUpdateChannel? channel = null, bool updateOverride = false) {
-		if (channel.HasValue && !Enum.IsDefined(channel.Value)) {
-			throw new InvalidEnumArgumentException(nameof(channel), (int) channel, typeof(GlobalConfig.EUpdateChannel));
+	internal static async Task<(bool Updated, Version? NewVersion)> Update(GlobalConfig.EUpdateChannel? updateChannel = null, bool updateOverride = false, bool forced = false) {
+		if (updateChannel.HasValue && !Enum.IsDefined(updateChannel.Value)) {
+			throw new InvalidEnumArgumentException(nameof(updateChannel), (int) updateChannel, typeof(GlobalConfig.EUpdateChannel));
 		}
 
 		if (GlobalConfig == null) {
 			throw new InvalidOperationException(nameof(GlobalConfig));
 		}
 
-		if (WebBrowser == null) {
-			throw new InvalidOperationException(nameof(WebBrowser));
+		(bool updated, Version? newVersion) = await UpdateASF(updateChannel, updateOverride, forced).ConfigureAwait(false);
+
+		if (!updated) {
+			// ASF wasn't updated as part of the process, update the plugins alone
+			updated = await PluginsCore.UpdatePlugins(SharedInfo.Version, false, updateChannel, updateOverride, forced).ConfigureAwait(false);
 		}
 
-		channel ??= GlobalConfig.UpdateChannel;
-
-		if (!SharedInfo.BuildInfo.CanUpdate || (channel == GlobalConfig.EUpdateChannel.None)) {
-			return null;
-		}
-
-		await UpdateSemaphore.WaitAsync().ConfigureAwait(false);
-
-		try {
-			// If backup directory from previous update exists, it's a good idea to purge it now
-			string backupDirectory = Path.Combine(SharedInfo.HomeDirectory, SharedInfo.UpdateDirectory);
-
-			if (Directory.Exists(backupDirectory)) {
-				ArchiLogger.LogGenericInfo(Strings.UpdateCleanup);
-
-				for (byte i = 0; (i < WebBrowser.MaxTries) && Directory.Exists(backupDirectory); i++) {
-					if (i > 0) {
-						// It's entirely possible that old process is still running, wait a short moment for eventual cleanup
-						await Task.Delay(5000).ConfigureAwait(false);
-					}
-
-					try {
-						Directory.Delete(backupDirectory, true);
-					} catch (Exception e) {
-						ArchiLogger.LogGenericDebuggingException(e);
-
-						continue;
-					}
-
-					break;
-				}
-
-				if (Directory.Exists(backupDirectory)) {
-					ArchiLogger.LogGenericError(Strings.WarningFailed);
-
-					return null;
-				}
-
-				ArchiLogger.LogGenericInfo(Strings.Done);
-			}
-
-			ArchiLogger.LogGenericInfo(Strings.UpdateCheckingNewVersion);
-
-			GitHub.ReleaseResponse? releaseResponse = await GitHub.GetLatestRelease(channel == GlobalConfig.EUpdateChannel.Stable).ConfigureAwait(false);
-
-			if (releaseResponse == null) {
-				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateCheckFailed);
-
-				return null;
-			}
-
-			if (string.IsNullOrEmpty(releaseResponse.Tag)) {
-				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateCheckFailed);
-
-				return null;
-			}
-
-			Version newVersion = new(releaseResponse.Tag);
-
-			ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.UpdateVersionInfo, SharedInfo.Version, newVersion));
-
-			if (SharedInfo.Version >= newVersion) {
-				return newVersion;
-			}
-
-			if (!updateOverride && (GlobalConfig.UpdatePeriod == 0)) {
-				ArchiLogger.LogGenericInfo(Strings.UpdateNewVersionAvailable);
-				await Task.Delay(SharedInfo.ShortInformationDelay).ConfigureAwait(false);
-
-				return null;
-			}
-
-			// Auto update logic starts here
-			if (releaseResponse.Assets.IsEmpty) {
-				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateNoAssets);
-
-				return null;
-			}
-
-			string targetFile = $"{SharedInfo.ASF}-{SharedInfo.BuildInfo.Variant}.zip";
-			GitHub.ReleaseResponse.Asset? binaryAsset = releaseResponse.Assets.FirstOrDefault(asset => !string.IsNullOrEmpty(asset.Name) && asset.Name!.Equals(targetFile, StringComparison.OrdinalIgnoreCase));
-
-			if (binaryAsset == null) {
-				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateNoAssetForThisVersion);
-
-				return null;
-			}
-
-			if (binaryAsset.DownloadURL == null) {
-				ArchiLogger.LogNullError(binaryAsset.DownloadURL);
-
-				return null;
-			}
-
-			ArchiLogger.LogGenericInfo(Strings.FetchingChecksumFromRemoteServer);
-
-			string? remoteChecksum = await ArchiNet.FetchBuildChecksum(newVersion, SharedInfo.BuildInfo.Variant).ConfigureAwait(false);
-
-			switch (remoteChecksum) {
-				case null:
-					// Timeout or error, refuse to update as a security measure
-					return null;
-				case "":
-					// Unknown checksum, release too new or actual malicious build published, no need to scare the user as it's 99.99% the first
-					ArchiLogger.LogGenericWarning(Strings.ChecksumMissing);
-
-					return SharedInfo.Version;
-			}
-
-			if (!string.IsNullOrEmpty(releaseResponse.ChangelogPlainText)) {
-				ArchiLogger.LogGenericInfo(releaseResponse.ChangelogPlainText!);
-			}
-
-			ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.UpdateDownloadingNewVersion, newVersion, binaryAsset.Size / 1024 / 1024));
-
-			Progress<byte> progressReporter = new();
-
-			progressReporter.ProgressChanged += OnProgressChanged;
-
-			BinaryResponse? response;
-
-			try {
-				response = await WebBrowser.UrlGetToBinary(binaryAsset.DownloadURL!, progressReporter: progressReporter).ConfigureAwait(false);
-			} finally {
-				progressReporter.ProgressChanged -= OnProgressChanged;
-			}
-
-			if (response?.Content == null) {
-				return null;
-			}
-
-			ArchiLogger.LogGenericInfo(Strings.VerifyingChecksumWithRemoteServer);
-
-			byte[] responseBytes = response.Content as byte[] ?? response.Content.ToArray();
-
-			string checksum = Convert.ToHexString(SHA512.HashData(responseBytes));
-
-			if (!checksum.Equals(remoteChecksum, StringComparison.OrdinalIgnoreCase)) {
-				ArchiLogger.LogGenericError(Strings.ChecksumWrong);
-
-				return SharedInfo.Version;
-			}
-
-			await PluginsCore.OnUpdateProceeding(newVersion).ConfigureAwait(false);
-
-			bool kestrelWasRunning = ArchiKestrel.IsRunning;
-
-			if (kestrelWasRunning) {
-				// We disable ArchiKestrel here as the update process moves the core files and might result in IPC crash
-				// TODO: It might fail if the update was triggered from the API, this should be something to improve in the future, by changing the structure into request -> return response -> finish update
-				try {
-					await ArchiKestrel.Stop().ConfigureAwait(false);
-				} catch (Exception e) {
-					ArchiLogger.LogGenericWarningException(e);
-				}
-			}
-
-			ArchiLogger.LogGenericInfo(Strings.PatchingFiles);
-
-			MemoryStream ms = new(responseBytes);
-
-			try {
-				await using (ms.ConfigureAwait(false)) {
-					using ZipArchive zipArchive = new(ms);
-
-					if (!UpdateFromArchive(zipArchive, SharedInfo.HomeDirectory)) {
-						ArchiLogger.LogGenericError(Strings.WarningFailed);
-					}
-				}
-			} catch (Exception e) {
-				ArchiLogger.LogGenericException(e);
-
-				if (kestrelWasRunning) {
-					// We've temporarily disabled ArchiKestrel but the update has failed, let's bring it back up
-					// We can't even be sure if it's possible to bring it back up in this state, but it's worth trying anyway
-					try {
-						await ArchiKestrel.Start().ConfigureAwait(false);
-					} catch (Exception ex) {
-						ArchiLogger.LogGenericWarningException(ex);
-					}
-				}
-
-				return null;
-			}
-
-			ArchiLogger.LogGenericInfo(Strings.UpdateFinished);
-
-			await PluginsCore.OnUpdateFinished(newVersion).ConfigureAwait(false);
-
-			return newVersion;
-		} finally {
-			UpdateSemaphore.Release();
-		}
+		return (updated, newVersion);
 	}
 
 	private static async Task<bool> CanHandleWriteEvent(string filePath) {
-		if (string.IsNullOrEmpty(filePath)) {
-			throw new ArgumentNullException(nameof(filePath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(filePath);
 
 		if (LastWriteEvents == null) {
 			throw new InvalidOperationException(nameof(LastWriteEvents));
@@ -409,7 +231,6 @@ public static class ASF {
 	private static HashSet<string> GetLoadedAssembliesNames() {
 		Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
 
-		// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
 		return loadedAssemblies.Select(static loadedAssembly => loadedAssembly.FullName).Where(static name => !string.IsNullOrEmpty(name)).ToHashSet(StringComparer.Ordinal)!;
 	}
 
@@ -442,12 +263,13 @@ public static class ASF {
 		LoginSemaphore ??= await PluginsCore.GetCrossProcessSemaphore(nameof(LoginSemaphore)).ConfigureAwait(false);
 		RateLimitingSemaphore ??= await PluginsCore.GetCrossProcessSemaphore(nameof(RateLimitingSemaphore)).ConfigureAwait(false);
 
-		WebLimitingSemaphores ??= new Dictionary<Uri, (ICrossProcessSemaphore RateLimitingSemaphore, SemaphoreSlim OpenConnectionsSemaphore)>(4) {
+		WebLimitingSemaphores ??= new Dictionary<Uri, (ICrossProcessSemaphore RateLimitingSemaphore, SemaphoreSlim OpenConnectionsSemaphore)>(5) {
+			{ ArchiWebHandler.SteamCheckoutURL, (await PluginsCore.GetCrossProcessSemaphore($"{nameof(ArchiWebHandler)}-{nameof(ArchiWebHandler.SteamCheckoutURL)}").ConfigureAwait(false), new SemaphoreSlim(WebBrowser.MaxConnections, WebBrowser.MaxConnections)) },
 			{ ArchiWebHandler.SteamCommunityURL, (await PluginsCore.GetCrossProcessSemaphore($"{nameof(ArchiWebHandler)}-{nameof(ArchiWebHandler.SteamCommunityURL)}").ConfigureAwait(false), new SemaphoreSlim(WebBrowser.MaxConnections, WebBrowser.MaxConnections)) },
 			{ ArchiWebHandler.SteamHelpURL, (await PluginsCore.GetCrossProcessSemaphore($"{nameof(ArchiWebHandler)}-{nameof(ArchiWebHandler.SteamHelpURL)}").ConfigureAwait(false), new SemaphoreSlim(WebBrowser.MaxConnections, WebBrowser.MaxConnections)) },
 			{ ArchiWebHandler.SteamStoreURL, (await PluginsCore.GetCrossProcessSemaphore($"{nameof(ArchiWebHandler)}-{nameof(ArchiWebHandler.SteamStoreURL)}").ConfigureAwait(false), new SemaphoreSlim(WebBrowser.MaxConnections, WebBrowser.MaxConnections)) },
 			{ WebAPI.DefaultBaseAddress, (await PluginsCore.GetCrossProcessSemaphore($"{nameof(ArchiWebHandler)}-{nameof(WebAPI)}").ConfigureAwait(false), new SemaphoreSlim(WebBrowser.MaxConnections, WebBrowser.MaxConnections)) }
-		}.ToImmutableDictionary();
+		}.ToFrozenDictionary();
 	}
 
 	private static void LoadAllAssemblies() {
@@ -515,21 +337,14 @@ public static class ASF {
 	}
 
 	private static async Task OnChangedConfigFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		await OnCreatedConfigFile(name, fullPath).ConfigureAwait(false);
 	}
 
 	private static async Task OnChangedConfigFile(string name) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
 
 		if (!name.Equals(SharedInfo.IPCConfigFile, StringComparison.OrdinalIgnoreCase) || (GlobalConfig?.IPC != true)) {
 			return;
@@ -545,13 +360,8 @@ public static class ASF {
 	}
 
 	private static async Task OnChangedFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		string extension = Path.GetExtension(name);
 
@@ -569,15 +379,32 @@ public static class ASF {
 	}
 
 	private static async Task OnChangedKeysFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		await OnCreatedKeysFile(name, fullPath).ConfigureAwait(false);
+	}
+
+	private static async Task OnConfigChanged() {
+		string globalConfigFile = GetFilePath(EFileType.Config);
+
+		if (string.IsNullOrEmpty(globalConfigFile)) {
+			throw new InvalidOperationException(nameof(globalConfigFile));
+		}
+
+		(GlobalConfig? globalConfig, _) = await GlobalConfig.Load(globalConfigFile).ConfigureAwait(false);
+
+		if (globalConfig == null) {
+			// Invalid config file, we allow user to fix it without destroying the ASF instance right away
+			return;
+		}
+
+		if (globalConfig == GlobalConfig) {
+			return;
+		}
+
+		ArchiLogger.LogGenericInfo(Strings.GlobalConfigChanged);
+		await RestartOrExit().ConfigureAwait(false);
 	}
 
 	private static async void OnCreated(object sender, FileSystemEventArgs e) {
@@ -596,13 +423,8 @@ public static class ASF {
 	}
 
 	private static async Task OnCreatedConfigFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		string extension = Path.GetExtension(name);
 
@@ -619,13 +441,8 @@ public static class ASF {
 	}
 
 	private static async Task OnCreatedFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		string extension = Path.GetExtension(name);
 
@@ -643,13 +460,8 @@ public static class ASF {
 	}
 
 	private static async Task OnCreatedJsonFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		if (Bot.Bots == null) {
 			throw new InvalidOperationException(nameof(Bot.Bots));
@@ -666,8 +478,7 @@ public static class ASF {
 		}
 
 		if (botName.Equals(SharedInfo.ASF, StringComparison.OrdinalIgnoreCase)) {
-			ArchiLogger.LogGenericInfo(Strings.GlobalConfigChanged);
-			await RestartOrExit().ConfigureAwait(false);
+			await OnConfigChanged().ConfigureAwait(false);
 
 			return;
 		}
@@ -682,19 +493,14 @@ public static class ASF {
 			await Bot.RegisterBot(botName).ConfigureAwait(false);
 
 			if (Bot.Bots.Count > MaximumRecommendedBotsCount) {
-				ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningExcessiveBotsCount, MaximumRecommendedBotsCount));
+				ArchiLogger.LogGenericWarning(Strings.FormatWarningExcessiveBotsCount(MaximumRecommendedBotsCount));
 			}
 		}
 	}
 
 	private static async Task OnCreatedKeysFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		if (Bot.Bots == null) {
 			throw new InvalidOperationException(nameof(Bot.Bots));
@@ -733,13 +539,8 @@ public static class ASF {
 	}
 
 	private static async Task OnDeletedConfigFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		string extension = Path.GetExtension(name);
 
@@ -756,13 +557,8 @@ public static class ASF {
 	}
 
 	private static async Task OnDeletedFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		string extension = Path.GetExtension(name);
 
@@ -776,13 +572,8 @@ public static class ASF {
 	}
 
 	private static async Task OnDeletedJsonConfigFile(string name, string fullPath) {
-		if (string.IsNullOrEmpty(name)) {
-			throw new ArgumentNullException(nameof(name));
-		}
-
-		if (string.IsNullOrEmpty(fullPath)) {
-			throw new ArgumentNullException(nameof(fullPath));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(name);
+		ArgumentException.ThrowIfNullOrEmpty(fullPath);
 
 		if (Bot.Bots == null) {
 			throw new InvalidOperationException(nameof(Bot.Bots));
@@ -826,16 +617,6 @@ public static class ASF {
 		}
 	}
 
-	private static void OnProgressChanged(object? sender, byte progressPercentage) {
-		const byte printEveryPercentage = 10;
-
-		if (progressPercentage % printEveryPercentage != 0) {
-			return;
-		}
-
-		ArchiLogger.LogGenericDebug($"{progressPercentage}%...");
-	}
-
 	private static async void OnRenamed(object sender, RenamedEventArgs e) {
 		// This function can be called with a possibility of OldName or (new) Name being null, we have to take it into account
 		ArgumentNullException.ThrowIfNull(sender);
@@ -850,26 +631,48 @@ public static class ASF {
 		}
 	}
 
-	private static async Task RegisterBots() {
-		if ((GlobalConfig == null) || (GlobalDatabase == null) || (WebBrowser == null)) {
-			throw new InvalidOperationException($"{nameof(GlobalConfig)} || {nameof(GlobalDatabase)} || {nameof(WebBrowser)}");
+	private static async Task<bool> ProtectAgainstCrashes() {
+		if (Debugging.IsDebugBuild) {
+			// Allow debug builds to run unconditionally, we expect to crash a lot in those
+			return true;
 		}
 
-		// Ensure that we ask for a list of servers if we don't have any saved servers available
-		IEnumerable<ServerRecord> servers = await GlobalDatabase.ServerListProvider.FetchServerListAsync().ConfigureAwait(false);
+		string crashFilePath = GetFilePath(EFileType.Crash);
 
-		if (!servers.Any()) {
-			ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.Initializing, nameof(SteamDirectory)));
+		CrashFile crashFile = await CrashFile.CreateOrLoad(crashFilePath).ConfigureAwait(false);
 
-			SteamConfiguration steamConfiguration = SteamConfiguration.Create(static builder => builder.WithProtocolTypes(GlobalConfig.SteamProtocols).WithCellID(GlobalDatabase.CellID).WithServerListProvider(GlobalDatabase.ServerListProvider).WithHttpClientFactory(static () => WebBrowser.GenerateDisposableHttpClient()));
+		if (crashFile.StartupCount >= WebBrowser.MaxTries) {
+			// We've reached maximum allowed count of recent crashes, return failure
+			return false;
+		}
 
-			try {
-				await SteamDirectory.LoadAsync(steamConfiguration).ConfigureAwait(false);
-				ArchiLogger.LogGenericInfo(Strings.Success);
-			} catch (Exception e) {
-				ArchiLogger.LogGenericWarningException(e);
-				ArchiLogger.LogGenericWarning(Strings.BotSteamDirectoryInitializationFailed);
-			}
+		DateTime now = DateTime.UtcNow;
+
+		if (now - crashFile.LastStartup > TimeSpan.FromMinutes(5)) {
+			// Last crash was long ago, restart counter
+			crashFile.StartupCount = 1;
+		} else if (++crashFile.StartupCount >= WebBrowser.MaxTries) {
+			// We've reached maximum allowed count of recent crashes, return failure
+			return false;
+		}
+
+		crashFile.LastStartup = now;
+
+		// We're allowing this run to proceed
+		return true;
+	}
+
+	private static async Task RegisterBots() {
+		if (GlobalConfig == null) {
+			throw new InvalidOperationException(nameof(GlobalConfig));
+		}
+
+		if (GlobalDatabase == null) {
+			throw new InvalidOperationException(nameof(GlobalDatabase));
+		}
+
+		if (WebBrowser == null) {
+			throw new InvalidOperationException(nameof(WebBrowser));
 		}
 
 		HashSet<string> botNames;
@@ -888,7 +691,7 @@ public static class ASF {
 
 				return;
 			case > MaximumRecommendedBotsCount:
-				ArchiLogger.LogGenericWarning(string.Format(CultureInfo.CurrentCulture, Strings.WarningExcessiveBotsCount, MaximumRecommendedBotsCount));
+				ArchiLogger.LogGenericWarning(Strings.FormatWarningExcessiveBotsCount(MaximumRecommendedBotsCount));
 				await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
 
 				break;
@@ -902,7 +705,7 @@ public static class ASF {
 			throw new InvalidOperationException(nameof(GlobalConfig));
 		}
 
-		if (!SharedInfo.BuildInfo.CanUpdate || (GlobalConfig.UpdateChannel == GlobalConfig.EUpdateChannel.None)) {
+		if (GlobalConfig.UpdateChannel == GlobalConfig.EUpdateChannel.None) {
 			return;
 		}
 
@@ -916,17 +719,14 @@ public static class ASF {
 				autoUpdatePeriod // Period
 			);
 
-			ArchiLogger.LogGenericInfo(string.Format(CultureInfo.CurrentCulture, Strings.AutoUpdateCheckInfo, autoUpdatePeriod.ToHumanReadable()));
+			ArchiLogger.LogGenericInfo(Strings.FormatAutoUpdateCheckInfo(autoUpdatePeriod.ToHumanReadable()));
 		}
 
-		Version? newVersion = await Update().ConfigureAwait(false);
+		(bool updated, Version? newVersion) = await Update().ConfigureAwait(false);
 
-		if (newVersion == null) {
-			return;
-		}
-
-		if (SharedInfo.Version >= newVersion) {
-			if (SharedInfo.Version > newVersion) {
+		if (!updated) {
+			if ((newVersion != null) && (SharedInfo.Version > newVersion)) {
+				// User is running version newer than their channel allows
 				ArchiLogger.LogGenericWarning(Strings.WarningPreReleaseVersion);
 				await Task.Delay(SharedInfo.InformationDelay).ConfigureAwait(false);
 			}
@@ -934,15 +734,212 @@ public static class ASF {
 			return;
 		}
 
+		// Allow crash file recovery, if needed
+		Program.AllowCrashFileRemoval = true;
+
 		await RestartOrExit().ConfigureAwait(false);
 	}
 
-	private static bool UpdateFromArchive(ZipArchive archive, string targetDirectory) {
-		ArgumentNullException.ThrowIfNull(archive);
-
-		if (string.IsNullOrEmpty(targetDirectory)) {
-			throw new ArgumentNullException(nameof(targetDirectory));
+	private static async Task<(bool Updated, Version? NewVersion)> UpdateASF(GlobalConfig.EUpdateChannel? channel = null, bool updateOverride = false, bool forced = false) {
+		if (channel.HasValue && !Enum.IsDefined(channel.Value)) {
+			throw new InvalidEnumArgumentException(nameof(channel), (int) channel, typeof(GlobalConfig.EUpdateChannel));
 		}
+
+		if (GlobalConfig == null) {
+			throw new InvalidOperationException(nameof(GlobalConfig));
+		}
+
+		if (WebBrowser == null) {
+			throw new InvalidOperationException(nameof(WebBrowser));
+		}
+
+		channel ??= GlobalConfig.UpdateChannel;
+
+		if (!BuildInfo.CanUpdate || (channel == GlobalConfig.EUpdateChannel.None)) {
+			return (false, null);
+		}
+
+		string targetFile;
+
+		await UpdateSemaphore.WaitAsync().ConfigureAwait(false);
+
+		try {
+			// If directories from previous update exist, it's a good idea to purge them now
+			if (!await Utilities.UpdateCleanup(SharedInfo.HomeDirectory).ConfigureAwait(false)) {
+				return (false, null);
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.UpdateCheckingNewVersion);
+
+			ReleaseResponse? releaseResponse = await GitHubService.GetLatestRelease(SharedInfo.GithubRepo, channel == GlobalConfig.EUpdateChannel.Stable).ConfigureAwait(false);
+
+			if (releaseResponse == null) {
+				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateCheckFailed);
+
+				return (false, null);
+			}
+
+			if (string.IsNullOrEmpty(releaseResponse.Tag)) {
+				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateCheckFailed);
+
+				return (false, null);
+			}
+
+			Version newVersion = new(releaseResponse.Tag);
+
+			ArchiLogger.LogGenericInfo(Strings.FormatUpdateVersionInfo(SharedInfo.Version, newVersion));
+
+			if (!forced && (SharedInfo.Version >= newVersion)) {
+				return (false, newVersion);
+			}
+
+			if (!updateOverride && (GlobalConfig.UpdatePeriod == 0)) {
+				ArchiLogger.LogGenericInfo(Strings.UpdateNewVersionAvailable);
+				await Task.Delay(SharedInfo.ShortInformationDelay).ConfigureAwait(false);
+
+				return (false, newVersion);
+			}
+
+			// Auto update logic starts here
+			if (releaseResponse.Assets.IsEmpty) {
+				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateNoAssets);
+
+				return (false, newVersion);
+			}
+
+			targetFile = $"{SharedInfo.ASF}-{BuildInfo.Variant}.zip";
+			ReleaseAsset? binaryAsset = releaseResponse.Assets.FirstOrDefault(asset => !string.IsNullOrEmpty(asset.Name) && asset.Name.Equals(targetFile, StringComparison.OrdinalIgnoreCase));
+
+			if (binaryAsset == null) {
+				ArchiLogger.LogGenericWarning(Strings.ErrorUpdateNoAssetForThisVersion);
+
+				return (false, newVersion);
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.FetchingChecksumFromRemoteServer);
+
+			// Keep short timeout allowed for this call, as we don't want to hold the flow for too long
+			using CancellationTokenSource archiNetCancellation = new(TimeSpan.FromSeconds(15));
+
+			string? remoteChecksum = await ArchiNet.FetchBuildChecksum(newVersion, BuildInfo.Variant, archiNetCancellation.Token).ConfigureAwait(false);
+
+			switch (remoteChecksum) {
+				case null:
+					// Timeout or error, refuse to update as a security measure
+					ArchiLogger.LogGenericWarning(Strings.ChecksumTimeout);
+
+					return (false, newVersion);
+				case "":
+					// Unknown checksum, release too new or actual malicious build published, no need to scare the user as it's 99.99% the first
+					ArchiLogger.LogGenericWarning(Strings.ChecksumMissing);
+
+					return (false, newVersion);
+			}
+
+			if (!string.IsNullOrEmpty(releaseResponse.ChangelogPlainText)) {
+				ArchiLogger.LogGenericInfo(releaseResponse.ChangelogPlainText);
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.FormatUpdateDownloadingNewVersion(newVersion, binaryAsset.Size / 1024 / 1024));
+
+			Progress<byte> progressReporter = new();
+
+			progressReporter.ProgressChanged += onProgressChanged;
+
+			BinaryResponse? response;
+
+			try {
+				// ReSharper disable once MethodSupportsCancellation - the token initialized above is not meant to be passed here
+				response = await WebBrowser.UrlGetToBinary(binaryAsset.DownloadURL, progressReporter: progressReporter).ConfigureAwait(false);
+			} finally {
+				progressReporter.ProgressChanged -= onProgressChanged;
+			}
+
+			if (response?.Content == null) {
+				return (false, newVersion);
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.VerifyingChecksumWithRemoteServer);
+
+			byte[] responseBytes = response.Content as byte[] ?? response.Content.ToArray();
+
+			string checksum = Utilities.GenerateChecksumFor(responseBytes);
+
+			if (!checksum.Equals(remoteChecksum, StringComparison.OrdinalIgnoreCase)) {
+				ArchiLogger.LogGenericError(Strings.ChecksumWrong);
+
+				return (false, newVersion);
+			}
+
+			await PluginsCore.OnUpdateProceeding(newVersion).ConfigureAwait(false);
+
+			bool kestrelWasRunning = ArchiKestrel.IsRunning;
+
+			if (kestrelWasRunning) {
+				// We disable ArchiKestrel here as the update process moves the core files and might result in IPC crash
+				ASFController.PendingVersionUpdate = newVersion;
+
+				try {
+					await ArchiKestrel.Stop().ConfigureAwait(false);
+				} catch (Exception e) {
+					ArchiLogger.LogGenericWarningException(e);
+				} finally {
+					ASFController.PendingVersionUpdate = null;
+				}
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.PatchingFiles);
+
+			try {
+				MemoryStream memoryStream = new(responseBytes);
+
+				await using (memoryStream.ConfigureAwait(false)) {
+					using ZipArchive zipArchive = new(memoryStream);
+
+					if (!await UpdateFromArchive(newVersion, channel.Value, updateOverride, forced, zipArchive).ConfigureAwait(false)) {
+						ArchiLogger.LogGenericError(Strings.WarningFailed);
+					}
+				}
+			} catch (Exception e) {
+				ArchiLogger.LogGenericException(e);
+
+				if (kestrelWasRunning) {
+					// We've temporarily disabled ArchiKestrel but the update has failed, let's bring it back up
+					// We can't even be sure if it's possible to bring it back up in this state, but it's worth trying anyway
+					try {
+						await ArchiKestrel.Start().ConfigureAwait(false);
+					} catch (Exception ex) {
+						ArchiLogger.LogGenericWarningException(ex);
+					}
+				}
+
+				return (false, newVersion);
+			}
+
+			ArchiLogger.LogGenericInfo(Strings.UpdateFinished);
+
+			await PluginsCore.OnUpdateFinished(newVersion).ConfigureAwait(false);
+
+			return (true, newVersion);
+		} finally {
+			UpdateSemaphore.Release();
+		}
+
+		void onProgressChanged(object? sender, byte progressPercentage) {
+			ArgumentOutOfRangeException.ThrowIfGreaterThan(progressPercentage, 100);
+
+			Utilities.OnProgressChanged(targetFile, progressPercentage);
+		}
+	}
+
+	private static async Task<bool> UpdateFromArchive(Version newVersion, GlobalConfig.EUpdateChannel updateChannel, bool updateOverride, bool forced, ZipArchive zipArchive) {
+		ArgumentNullException.ThrowIfNull(newVersion);
+
+		if (!Enum.IsDefined(updateChannel)) {
+			throw new InvalidEnumArgumentException(nameof(updateChannel), (int) updateChannel, typeof(GlobalConfig.EUpdateChannel));
+		}
+
+		ArgumentNullException.ThrowIfNull(zipArchive);
 
 		if (SharedInfo.HomeDirectory == AppContext.BaseDirectory) {
 			// We're running a build that includes our dependencies in ASF's home
@@ -955,116 +952,10 @@ public static class ASF {
 			LoadAssembliesNeededBeforeUpdate();
 		}
 
-		// Firstly we'll move all our existing files to a backup directory
-		string backupDirectory = Path.Combine(targetDirectory, SharedInfo.UpdateDirectory);
+		// We're ready to start update process, handle any plugin updates ready for new version
+		await PluginsCore.UpdatePlugins(newVersion, true, updateChannel, updateOverride, forced).ConfigureAwait(false);
 
-		foreach (string file in Directory.EnumerateFiles(targetDirectory, "*", SearchOption.AllDirectories)) {
-			string fileName = Path.GetFileName(file);
-
-			if (string.IsNullOrEmpty(fileName)) {
-				ArchiLogger.LogNullError(fileName);
-
-				return false;
-			}
-
-			string relativeFilePath = Path.GetRelativePath(targetDirectory, file);
-
-			if (string.IsNullOrEmpty(relativeFilePath)) {
-				ArchiLogger.LogNullError(relativeFilePath);
-
-				return false;
-			}
-
-			string? relativeDirectoryName = Path.GetDirectoryName(relativeFilePath);
-
-			switch (relativeDirectoryName) {
-				case null:
-					ArchiLogger.LogNullError(relativeDirectoryName);
-
-					return false;
-				case "":
-					// No directory, root folder
-					switch (fileName) {
-						case Logging.NLogConfigurationFile:
-						case SharedInfo.LogFile:
-							// Files with those names in root directory we want to keep
-							continue;
-					}
-
-					break;
-				case SharedInfo.ArchivalLogsDirectory:
-				case SharedInfo.ConfigDirectory:
-				case SharedInfo.DebugDirectory:
-				case SharedInfo.PluginsDirectory:
-				case SharedInfo.UpdateDirectory:
-					// Files in those directories we want to keep in their current place
-					continue;
-				default:
-					// Files in subdirectories of those directories we want to keep as well
-					if (Utilities.RelativeDirectoryStartsWith(relativeDirectoryName, SharedInfo.ArchivalLogsDirectory, SharedInfo.ConfigDirectory, SharedInfo.DebugDirectory, SharedInfo.PluginsDirectory, SharedInfo.UpdateDirectory)) {
-						continue;
-					}
-
-					break;
-			}
-
-			string targetBackupDirectory = relativeDirectoryName.Length > 0 ? Path.Combine(backupDirectory, relativeDirectoryName) : backupDirectory;
-			Directory.CreateDirectory(targetBackupDirectory);
-
-			string targetBackupFile = Path.Combine(targetBackupDirectory, fileName);
-
-			File.Move(file, targetBackupFile, true);
-		}
-
-		// We can now get rid of directories that are empty
-		Utilities.DeleteEmptyDirectoriesRecursively(targetDirectory);
-
-		if (!Directory.Exists(targetDirectory)) {
-			Directory.CreateDirectory(targetDirectory);
-		}
-
-		// Now enumerate over files in the zip archive, skip directory entries that we're not interested in (we can create them ourselves if needed)
-		foreach (ZipArchiveEntry zipFile in archive.Entries.Where(static zipFile => !string.IsNullOrEmpty(zipFile.Name))) {
-			string file = Path.GetFullPath(Path.Combine(targetDirectory, zipFile.FullName));
-
-			if (!file.StartsWith(targetDirectory, StringComparison.Ordinal)) {
-				throw new InvalidOperationException(nameof(file));
-			}
-
-			if (File.Exists(file)) {
-				// This is possible only with files that we decided to leave in place during our backup function
-				string targetBackupFile = $"{file}.bak";
-
-				File.Move(file, targetBackupFile, true);
-			}
-
-			// Check if this file requires its own folder
-			if (zipFile.Name != zipFile.FullName) {
-				string? directory = Path.GetDirectoryName(file);
-
-				if (string.IsNullOrEmpty(directory)) {
-					ArchiLogger.LogNullError(directory);
-
-					return false;
-				}
-
-				// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-				if (!Directory.Exists(directory!)) {
-					// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-					Directory.CreateDirectory(directory!);
-				}
-
-				// We're not interested in extracting placeholder files (but we still want directories created for them, done above)
-				switch (zipFile.Name) {
-					case ".gitkeep":
-						continue;
-				}
-			}
-
-			zipFile.ExtractToFile(file);
-		}
-
-		return true;
+		return await Utilities.UpdateFromArchive(zipArchive, SharedInfo.HomeDirectory).ConfigureAwait(false);
 	}
 
 	[PublicAPI]
@@ -1075,11 +966,13 @@ public static class ASF {
 		SteamGuard,
 		SteamParentalCode,
 		TwoFactorAuthentication,
-		Cryptkey
+		Cryptkey,
+		DeviceConfirmation
 	}
 
 	internal enum EFileType : byte {
 		Config,
-		Database
+		Database,
+		Crash
 	}
 }

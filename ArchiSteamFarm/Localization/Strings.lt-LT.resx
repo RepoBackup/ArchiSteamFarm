@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -89,9 +87,7 @@ StackTrace:
 {2}</value>
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
-	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Išeinama su ne-nuliniu klaidos kodu!</value>
-	</data>
+	
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Užklausa nutrūksta: {0}</value>
 		<comment>{0} will be replaced by URL of the request</comment>
@@ -189,6 +185,10 @@ StackTrace:
 	<data name="UpdateVersionInfo" xml:space="preserve">
 		<value>Vietinė versija: {0} | Versija serveryje: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
+	</data>
+	<data name="UserInputDeviceConfirmation" xml:space="preserve">
+		<value>Patikrinkite jūsų Steam programėlę telefone, jūs turėjote gauti prisijungimo patvirtinimo pranešima. Parašykite Y jei jūs gavote ir patvirtinote pranešimą, N jei jūs norite pateikti kodą vietoje patvirtinimo pranešimo: </value>
+		<comment>Please note that this translation should end with space</comment>
 	</data>
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Prašome įvesti 2FA kodą iš jūsų Steam autentifikavimo programėlės: </value>
@@ -484,9 +484,6 @@ StackTrace:
 	<data name="BotHeartBeatFailed" xml:space="preserve">
 		<value>Nepavyko atjungti kliento. Apleidžiamas šis boto egzempliorius!</value>
 	</data>
-	<data name="BotSteamDirectoryInitializationFailed" xml:space="preserve">
-		<value>Nepavyko inicijuoti „SteamDirectory“: jungiantis su Steam tinklu gali užtrukti daug ilgiau nei įprastai!</value>
-	</data>
 	<data name="BotStopping" xml:space="preserve">
 		<value>Stabdoma...</value>
 	</data>
@@ -550,14 +547,6 @@ StackTrace:
 		<value>Dabartinis atminties naudojimas: {0} MB.
 Proceso veikimo laikas: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
-	</data>
-	<data name="ClearingDiscoveryQueue" xml:space="preserve">
-		<value>Peržiūrima Steam "Discovery queue" #{0}...</value>
-		<comment>{0} will be replaced by queue number</comment>
-	</data>
-	<data name="DoneClearingDiscoveryQueue" xml:space="preserve">
-		<value>Baigta peržiūrėti Steam „Discovery queue“ #{0}.</value>
-		<comment>{0} will be replaced by queue number</comment>
 	</data>
 	<data name="BotOwnsOverviewPerGame" xml:space="preserve">
 		<value>{0}/{1} botai jau turi šį žaidimą {2}.</value>
@@ -687,26 +676,11 @@ Proceso veikimo laikas: {1}</value>
 		<value>{0} konfigūracinis failas bus migruojamas į naujausią sintaksę...</value>
 		<comment>{0} will be replaced with the relative path to the affected config file</comment>
 	</data>
-	<data name="WarningWeakIPCPassword" xml:space="preserve">
-		<value>Jūsų IPC aplinkos slaptažodis yra silpnas. Pagalvokite pasirinkti stipresnį slaptažodį, kad geriau apsisaugotumėte. Detalės {0}</value>
-		<comment>{0} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakSteamPassword" xml:space="preserve">
-		<value>Jūsų „Steam“ slaptažodis paskyrai '{0}' yra silpnas. Pagalvokite pasirinkti stipresnį slaptažodį, kad geriau apsisaugotumėte. Detalės: {1}</value>
-		<comment>{0} will be replaced by the affected bot name, {1} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakCryptKey" xml:space="preserve">
-		<value>Jūsų šifravimo raktas yra silpnas. Pagalvokite pasirinkti stipresnį šifravimo raktą, kad geriau apsisaugotumėte. Detalės {0}</value>
-		<comment>{0} will be replaced by additional details about the encryption key being considered weak</comment>
-	</data>
 	<data name="WarningTooShortCryptKey" xml:space="preserve">
 		<value>Jūsų šifravimo raktas yra per trumpas. Rekomenduojame naudoti raktą, kuris yra bent {0} baitų (simbolių) ilgio.</value>
 		<comment>{0} will be replaced by the number of bytes (characters) recommended</comment>
 	</data>
-	<data name="WarningDefaultCryptKeyUsedForHashing" xml:space="preserve">
-		<value>Jūs naudojate {0} nustatymą is {1} ypatybės, tačiau nenurodėte tinkintos --cryptkey savybės. Privalote pateikti tinkintą --cryptkey savybę padidintai apsaugai.</value>
-		<comment>{0} will be replaced by the name of a particular setting (e.g. "SCrypt"), {1} will be replaced by the name of the property (e.g. "IPCPassword")</comment>
-	</data>
+	
 	<data name="WarningDefaultCryptKeyUsedForEncryption" xml:space="preserve">
 		<value>Jūs naudojate {0} nustatymą is {1} ypatybės, tačiau nenurodėte tinkintos --cryptkey savybės. Tai prieštarauja apsaugai, kadangi ASF bus priversta naudoti savo (žinomą) raktą. Reiktų nurodyti tinkintą --cryptkey savybę, kad šio gautumėte šio nustatymo naudą.</value>
 		<comment>{0} will be replaced by the name of a particular setting (e.g. "AES"), {1} will be replaced by the name of the property (e.g. "SteamPassword")</comment>
@@ -726,6 +700,7 @@ Proceso veikimo laikas: {1}</value>
 	<data name="ChecksumMissing" xml:space="preserve">
 		<value>Nuotolinis serveris nežino apie išleidimą, į kurį bandote atsinaujinti. Ši situacija galima, jeigu išleidimas buvo neseniai paskelbtas - neleidžiama atnaujinti iš karto dėl papildomos apsaugos.</value>
 	</data>
+	
 	<data name="ChecksumWrong" xml:space="preserve">
 		<value>Nuotolinis serveris atsakė su nesutampančia kontroline suma. Tai gali būti dėl sugadinto atsisiuntimo arba MITM atakos. Atsisakoma tęsti atnaujinimo procesą!</value>
 	</data>
@@ -744,4 +719,21 @@ Proceso veikimo laikas: {1}</value>
 		<value>Jūs bandote naudoti mokamą funkciją {0}, tačiau jūs neturite tinkamo LicenseID nustatyto globalioje konfigūracijoje. Prašome patikrinti savo konfigūraciją, kadangi funkcija neveiks be papildomų detalių.</value>
 		<comment>{0} will be replaced by feature name (e.g. MatchActively)</comment>
 	</data>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 </root>

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +23,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -78,8 +79,7 @@ internal sealed class SteamTarget : AsyncTaskTarget {
 		string? botName = BotName?.Render(logEvent);
 
 		if (!string.IsNullOrEmpty(botName)) {
-			// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-			bot = Bot.GetBot(botName!);
+			bot = Bot.GetBot(botName);
 
 			if (bot?.IsConnectedAndLoggedOn != true) {
 				return;
@@ -100,9 +100,7 @@ internal sealed class SteamTarget : AsyncTaskTarget {
 	}
 
 	private async Task SendGroupMessage(string message, Bot? bot = null) {
-		if (string.IsNullOrEmpty(message)) {
-			throw new ArgumentNullException(nameof(message));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(message);
 
 		if (bot == null) {
 			bot = Bot.Bots?.Values.FirstOrDefault(static targetBot => targetBot.IsConnectedAndLoggedOn);
@@ -113,14 +111,12 @@ internal sealed class SteamTarget : AsyncTaskTarget {
 		}
 
 		if (!await bot.SendMessage(ChatGroupID, SteamID, message).ConfigureAwait(false)) {
-			bot.ArchiLogger.LogGenericTrace(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(Bot.SendMessage)));
+			bot.ArchiLogger.LogGenericTrace(Strings.FormatWarningFailedWithError(nameof(Bot.SendMessage)));
 		}
 	}
 
 	private async Task SendPrivateMessage(string message, Bot? bot = null) {
-		if (string.IsNullOrEmpty(message)) {
-			throw new ArgumentNullException(nameof(message));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(message);
 
 		if (bot == null) {
 			bot = Bot.Bots?.Values.FirstOrDefault(targetBot => targetBot.IsConnectedAndLoggedOn && (targetBot.SteamID != SteamID));
@@ -131,7 +127,7 @@ internal sealed class SteamTarget : AsyncTaskTarget {
 		}
 
 		if (!await bot.SendMessage(SteamID, message).ConfigureAwait(false)) {
-			bot.ArchiLogger.LogGenericTrace(string.Format(CultureInfo.CurrentCulture, Strings.WarningFailedWithError, nameof(Bot.SendMessage)));
+			bot.ArchiLogger.LogGenericTrace(Strings.FormatWarningFailedWithError(nameof(Bot.SendMessage)));
 		}
 	}
 }

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +31,11 @@ using static ArchiSteamFarm.Steam.Integration.SteamChatMessage;
 
 namespace ArchiSteamFarm.Tests;
 
+#pragma warning disable CA1812 // False positive, the class is used during MSTest
 [TestClass]
-public sealed class SteamChatMessage {
+internal sealed class SteamChatMessage {
 	[TestMethod]
-	public async Task CanSplitEvenWithStupidlyLongPrefix() {
+	internal async Task CanSplitEvenWithStupidlyLongPrefix() {
 		string prefix = new('x', MaxMessagePrefixBytes);
 
 		const string emoji = "😎";
@@ -49,10 +52,10 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public void ContinuationCharacterSizeIsProperlyCalculated() => Assert.AreEqual(ContinuationCharacterBytes, Encoding.UTF8.GetByteCount(ContinuationCharacter.ToString()));
+	internal void ContinuationCharacterSizeIsProperlyCalculated() => Assert.AreEqual(ContinuationCharacterBytes, Encoding.UTF8.GetByteCount(ContinuationCharacter.ToString()));
 
 	[TestMethod]
-	public async Task DoesntSkipEmptyNewlines() {
+	internal async Task DoesntSkipEmptyNewlines() {
 		string message = $"asdf{Environment.NewLine}{Environment.NewLine}asdf";
 
 		List<string> output = await GetMessageParts(message).ToListAsync().ConfigureAwait(false);
@@ -64,7 +67,7 @@ public sealed class SteamChatMessage {
 	[DataRow(false)]
 	[DataRow(true)]
 	[DataTestMethod]
-	public async Task DoesntSplitInTheMiddleOfMultiByteChar(bool isAccountLimited) {
+	internal async Task DoesntSplitInTheMiddleOfMultiByteChar(bool isAccountLimited) {
 		int maxMessageBytes = isAccountLimited ? MaxMessageBytesForLimitedAccounts : MaxMessageBytesForUnlimitedAccounts;
 		int longLineLength = maxMessageBytes - ReservedContinuationMessageBytes;
 
@@ -82,7 +85,7 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public async Task DoesntSplitJustBecauseOfLastEscapableCharacter() {
+	internal async Task DoesntSplitJustBecauseOfLastEscapableCharacter() {
 		const string message = "abcdef[";
 		const string escapedMessage = @"abcdef\[";
 
@@ -95,7 +98,7 @@ public sealed class SteamChatMessage {
 	[DataRow(false)]
 	[DataRow(true)]
 	[DataTestMethod]
-	public async Task DoesntSplitOnBackslashNotUsedForEscaping(bool isAccountLimited) {
+	internal async Task DoesntSplitOnBackslashNotUsedForEscaping(bool isAccountLimited) {
 		int maxMessageBytes = isAccountLimited ? MaxMessageBytesForLimitedAccounts : MaxMessageBytesForUnlimitedAccounts;
 		int longLineLength = maxMessageBytes - ReservedContinuationMessageBytes;
 
@@ -111,7 +114,7 @@ public sealed class SteamChatMessage {
 	[DataRow(false)]
 	[DataRow(true)]
 	[DataTestMethod]
-	public async Task DoesntSplitOnEscapeCharacter(bool isAccountLimited) {
+	internal async Task DoesntSplitOnEscapeCharacter(bool isAccountLimited) {
 		int maxMessageBytes = isAccountLimited ? MaxMessageBytesForLimitedAccounts : MaxMessageBytesForUnlimitedAccounts;
 		int longLineLength = maxMessageBytes - ReservedContinuationMessageBytes;
 
@@ -127,7 +130,7 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public async Task NoNeedForAnySplittingWithNewlines() {
+	internal async Task NoNeedForAnySplittingWithNewlines() {
 		string message = $"abcdef{Environment.NewLine}ghijkl{Environment.NewLine}mnopqr";
 
 		List<string> output = await GetMessageParts(message).ToListAsync().ConfigureAwait(false);
@@ -137,7 +140,7 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public async Task NoNeedForAnySplittingWithoutNewlines() {
+	internal async Task NoNeedForAnySplittingWithoutNewlines() {
 		const string message = "abcdef";
 
 		List<string> output = await GetMessageParts(message).ToListAsync().ConfigureAwait(false);
@@ -147,10 +150,10 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public void ParagraphCharacterSizeIsLessOrEqualToContinuationCharacterSize() => Assert.IsTrue(ContinuationCharacterBytes >= Encoding.UTF8.GetByteCount(ParagraphCharacter.ToString()));
+	internal void ParagraphCharacterSizeIsLessOrEqualToContinuationCharacterSize() => Assert.IsTrue(ContinuationCharacterBytes >= Encoding.UTF8.GetByteCount(ParagraphCharacter.ToString()));
 
 	[TestMethod]
-	public async Task ProperlyEscapesCharacters() {
+	internal async Task ProperlyEscapesCharacters() {
 		const string message = @"[b]bold[/b] \n";
 		const string escapedMessage = @"\[b]bold\[/b] \\n";
 
@@ -161,7 +164,7 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public async Task ProperlyEscapesSteamMessagePrefix() {
+	internal async Task ProperlyEscapesSteamMessagePrefix() {
 		const string prefix = "/pre []";
 		const string escapedPrefix = @"/pre \[]";
 
@@ -176,7 +179,7 @@ public sealed class SteamChatMessage {
 	[DataRow(false)]
 	[DataRow(true)]
 	[DataTestMethod]
-	public async Task ProperlySplitsLongSingleLine(bool isAccountLimited) {
+	internal async Task ProperlySplitsLongSingleLine(bool isAccountLimited) {
 		int maxMessageBytes = isAccountLimited ? MaxMessageBytesForLimitedAccounts : MaxMessageBytesForUnlimitedAccounts;
 		int longLineLength = maxMessageBytes - ReservedContinuationMessageBytes;
 
@@ -194,66 +197,68 @@ public sealed class SteamChatMessage {
 	}
 
 	[TestMethod]
-	public void ReservedSizeForEscapingIsProperlyCalculated() => Assert.AreEqual(ReservedEscapeMessageBytes, Encoding.UTF8.GetByteCount(@"\") + 4); // Maximum amount of bytes per single UTF-8 character is 4, not 6 as from Encoding.UTF8.GetMaxByteCount(1)
+	internal void ReservedSizeForEscapingIsProperlyCalculated() => Assert.AreEqual(ReservedEscapeMessageBytes, Encoding.UTF8.GetByteCount(@"\") + 4); // Maximum amount of bytes per single UTF-8 character is 4, not 6 as from Encoding.UTF8.GetMaxByteCount(1)
 
 	[TestMethod]
-	public async Task RyzhehvostInitialTestForSplitting() {
+	internal async Task RyzhehvostInitialTestForSplitting() {
 		const string prefix = "/me ";
 
-		const string message = @"<XLimited5> Уже имеет: app/1493800 | Aircraft Carrier Survival: Prolouge
-<XLimited5> Уже имеет: app/349520 | Armillo
-<XLimited5> Уже имеет: app/346330 | BrainBread 2
-<XLimited5> Уже имеет: app/1086690 | C-War 2
-<XLimited5> Уже имеет: app/730 | Counter-Strike: Global Offensive
-<XLimited5> Уже имеет: app/838380 | DEAD OR ALIVE 6
-<XLimited5> Уже имеет: app/582890 | Estranged: The Departure
-<XLimited5> Уже имеет: app/331470 | Everlasting Summer
-<XLimited5> Уже имеет: app/1078000 | Gamecraft
-<XLimited5> Уже имеет: app/266310 | GameGuru
-<XLimited5> Уже имеет: app/275390 | Guacamelee! Super Turbo Championship Edition
-<XLimited5> Уже имеет: app/627690 | Idle Champions of the Forgotten Realms
-<XLimited5> Уже имеет: app/1048540 | Kao the Kangaroo: Round 2
-<XLimited5> Уже имеет: app/370910 | Kathy Rain
-<XLimited5> Уже имеет: app/343710 | KHOLAT
-<XLimited5> Уже имеет: app/253900 | Knights and Merchants
-<XLimited5> Уже имеет: app/224260 | No More Room in Hell
-<XLimited5> Уже имеет: app/343360 | Particula
-<XLimited5> Уже имеет: app/237870 | Planet Explorers
-<XLimited5> Уже имеет: app/684680 | Polygoneer
-<XLimited5> Уже имеет: app/1089130 | Quake II RTX
-<XLimited5> Уже имеет: app/755790 | Ring of Elysium
-<XLimited5> Уже имеет: app/1258080 | Shop Titans
-<XLimited5> Уже имеет: app/759530 | Struckd - 3D Game Creator
-<XLimited5> Уже имеет: app/269710 | Tumblestone
-<XLimited5> Уже имеет: app/304930 | Unturned
-<XLimited5> Уже имеет: app/1019250 | WWII TCG - World War 2: The Card Game
+		const string message = """
+								<XLimited5> Уже имеет: app/1493800 | Aircraft Carrier Survival: Prolouge
+								<XLimited5> Уже имеет: app/349520 | Armillo
+								<XLimited5> Уже имеет: app/346330 | BrainBread 2
+								<XLimited5> Уже имеет: app/1086690 | C-War 2
+								<XLimited5> Уже имеет: app/730 | Counter-Strike: Global Offensive
+								<XLimited5> Уже имеет: app/838380 | DEAD OR ALIVE 6
+								<XLimited5> Уже имеет: app/582890 | Estranged: The Departure
+								<XLimited5> Уже имеет: app/331470 | Everlasting Summer
+								<XLimited5> Уже имеет: app/1078000 | Gamecraft
+								<XLimited5> Уже имеет: app/266310 | GameGuru
+								<XLimited5> Уже имеет: app/275390 | Guacamelee! Super Turbo Championship Edition
+								<XLimited5> Уже имеет: app/627690 | Idle Champions of the Forgotten Realms
+								<XLimited5> Уже имеет: app/1048540 | Kao the Kangaroo: Round 2
+								<XLimited5> Уже имеет: app/370910 | Kathy Rain
+								<XLimited5> Уже имеет: app/343710 | KHOLAT
+								<XLimited5> Уже имеет: app/253900 | Knights and Merchants
+								<XLimited5> Уже имеет: app/224260 | No More Room in Hell
+								<XLimited5> Уже имеет: app/343360 | Particula
+								<XLimited5> Уже имеет: app/237870 | Planet Explorers
+								<XLimited5> Уже имеет: app/684680 | Polygoneer
+								<XLimited5> Уже имеет: app/1089130 | Quake II RTX
+								<XLimited5> Уже имеет: app/755790 | Ring of Elysium
+								<XLimited5> Уже имеет: app/1258080 | Shop Titans
+								<XLimited5> Уже имеет: app/759530 | Struckd - 3D Game Creator
+								<XLimited5> Уже имеет: app/269710 | Tumblestone
+								<XLimited5> Уже имеет: app/304930 | Unturned
+								<XLimited5> Уже имеет: app/1019250 | WWII TCG - World War 2: The Card Game
 
-<ASF> 1/1 ботов уже имеют игру app/1493800 | Aircraft Carrier Survival: Prolouge.
-<ASF> 1/1 ботов уже имеют игру app/349520 | Armillo.
-<ASF> 1/1 ботов уже имеют игру app/346330 | BrainBread 2.
-<ASF> 1/1 ботов уже имеют игру app/1086690 | C-War 2.
-<ASF> 1/1 ботов уже имеют игру app/730 | Counter-Strike: Global Offensive.
-<ASF> 1/1 ботов уже имеют игру app/838380 | DEAD OR ALIVE 6.
-<ASF> 1/1 ботов уже имеют игру app/582890 | Estranged: The Departure.
-<ASF> 1/1 ботов уже имеют игру app/331470 | Everlasting Summer.
-<ASF> 1/1 ботов уже имеют игру app/1078000 | Gamecraft.
-<ASF> 1/1 ботов уже имеют игру app/266310 | GameGuru.
-<ASF> 1/1 ботов уже имеют игру app/275390 | Guacamelee! Super Turbo Championship Edition.
-<ASF> 1/1 ботов уже имеют игру app/627690 | Idle Champions of the Forgotten Realms.
-<ASF> 1/1 ботов уже имеют игру app/1048540 | Kao the Kangaroo: Round 2.
-<ASF> 1/1 ботов уже имеют игру app/370910 | Kathy Rain.
-<ASF> 1/1 ботов уже имеют игру app/343710 | KHOLAT.
-<ASF> 1/1 ботов уже имеют игру app/253900 | Knights and Merchants.
-<ASF> 1/1 ботов уже имеют игру app/224260 | No More Room in Hell.
-<ASF> 1/1 ботов уже имеют игру app/343360 | Particula.
-<ASF> 1/1 ботов уже имеют игру app/237870 | Planet Explorers.
-<ASF> 1/1 ботов уже имеют игру app/684680 | Polygoneer.
-<ASF> 1/1 ботов уже имеют игру app/1089130 | Quake II RTX.
-<ASF> 1/1 ботов уже имеют игру app/755790 | Ring of Elysium.
-<ASF> 1/1 ботов уже имеют игру app/1258080 | Shop Titans.
-<ASF> 1/1 ботов уже имеют игру app/759530 | Struckd - 3D Game Creator.
-<ASF> 1/1 ботов уже имеют игру app/269710 | Tumblestone.
-<ASF> 1/1 ботов уже имеют игру app/304930 | Unturned.";
+								<ASF> 1/1 ботов уже имеют игру app/1493800 | Aircraft Carrier Survival: Prolouge.
+								<ASF> 1/1 ботов уже имеют игру app/349520 | Armillo.
+								<ASF> 1/1 ботов уже имеют игру app/346330 | BrainBread 2.
+								<ASF> 1/1 ботов уже имеют игру app/1086690 | C-War 2.
+								<ASF> 1/1 ботов уже имеют игру app/730 | Counter-Strike: Global Offensive.
+								<ASF> 1/1 ботов уже имеют игру app/838380 | DEAD OR ALIVE 6.
+								<ASF> 1/1 ботов уже имеют игру app/582890 | Estranged: The Departure.
+								<ASF> 1/1 ботов уже имеют игру app/331470 | Everlasting Summer.
+								<ASF> 1/1 ботов уже имеют игру app/1078000 | Gamecraft.
+								<ASF> 1/1 ботов уже имеют игру app/266310 | GameGuru.
+								<ASF> 1/1 ботов уже имеют игру app/275390 | Guacamelee! Super Turbo Championship Edition.
+								<ASF> 1/1 ботов уже имеют игру app/627690 | Idle Champions of the Forgotten Realms.
+								<ASF> 1/1 ботов уже имеют игру app/1048540 | Kao the Kangaroo: Round 2.
+								<ASF> 1/1 ботов уже имеют игру app/370910 | Kathy Rain.
+								<ASF> 1/1 ботов уже имеют игру app/343710 | KHOLAT.
+								<ASF> 1/1 ботов уже имеют игру app/253900 | Knights and Merchants.
+								<ASF> 1/1 ботов уже имеют игру app/224260 | No More Room in Hell.
+								<ASF> 1/1 ботов уже имеют игру app/343360 | Particula.
+								<ASF> 1/1 ботов уже имеют игру app/237870 | Planet Explorers.
+								<ASF> 1/1 ботов уже имеют игру app/684680 | Polygoneer.
+								<ASF> 1/1 ботов уже имеют игру app/1089130 | Quake II RTX.
+								<ASF> 1/1 ботов уже имеют игру app/755790 | Ring of Elysium.
+								<ASF> 1/1 ботов уже имеют игру app/1258080 | Shop Titans.
+								<ASF> 1/1 ботов уже имеют игру app/759530 | Struckd - 3D Game Creator.
+								<ASF> 1/1 ботов уже имеют игру app/269710 | Tumblestone.
+								<ASF> 1/1 ботов уже имеют игру app/304930 | Unturned.
+								""";
 
 		List<string> output = await GetMessageParts(message, prefix).ToListAsync().ConfigureAwait(false);
 
@@ -266,7 +271,7 @@ public sealed class SteamChatMessage {
 				return;
 			}
 
-			string[] lines = messagePart.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+			string[] lines = messagePart.Split(SharedInfo.NewLineIndicators, StringSplitOptions.None);
 
 			int bytes = lines.Where(static line => line.Length > 0).Sum(Encoding.UTF8.GetByteCount) + ((lines.Length - 1) * NewlineWeight);
 
@@ -281,7 +286,7 @@ public sealed class SteamChatMessage {
 	[DataRow(false)]
 	[DataRow(true)]
 	[DataTestMethod]
-	public async Task SplitsOnNewlinesWithParagraphCharacter(bool isAccountLimited) {
+	internal async Task SplitsOnNewlinesWithParagraphCharacter(bool isAccountLimited) {
 		int maxMessageBytes = isAccountLimited ? MaxMessageBytesForLimitedAccounts : MaxMessageBytesForUnlimitedAccounts;
 
 		StringBuilder newlinePartBuilder = new();
@@ -309,27 +314,22 @@ public sealed class SteamChatMessage {
 		Assert.AreEqual(newlinePart, output[3]);
 	}
 
-	[ExpectedException(typeof(ArgumentOutOfRangeException))]
 	[TestMethod]
-	public async Task ThrowsOnTooLongNewlinesPrefix() {
+	internal async Task ThrowsOnTooLongNewlinesPrefix() {
 		string prefix = new('\n', (MaxMessagePrefixBytes / NewlineWeight) + 1);
 
 		const string message = "asdf";
 
-		await GetMessageParts(message, prefix).ToListAsync().ConfigureAwait(false);
-
-		Assert.Fail();
+		await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(async () => await GetMessageParts(message, prefix).ToListAsync().ConfigureAwait(false)).ConfigureAwait(false);
 	}
 
-	[ExpectedException(typeof(ArgumentOutOfRangeException))]
 	[TestMethod]
-	public async Task ThrowsOnTooLongPrefix() {
+	internal async Task ThrowsOnTooLongPrefix() {
 		string prefix = new('x', MaxMessagePrefixBytes + 1);
 
 		const string message = "asdf";
 
-		await GetMessageParts(message, prefix).ToListAsync().ConfigureAwait(false);
-
-		Assert.Fail();
+		await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(async () => await GetMessageParts(message, prefix).ToListAsync().ConfigureAwait(false)).ConfigureAwait(false);
 	}
 }
+#pragma warning restore CA1812 // False positive, the class is used during MSTest

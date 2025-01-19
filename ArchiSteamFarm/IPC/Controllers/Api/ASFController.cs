@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +23,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.IPC.Requests;
@@ -31,25 +34,33 @@ using ArchiSteamFarm.IPC.Responses;
 using ArchiSteamFarm.Localization;
 using ArchiSteamFarm.Steam.Interaction;
 using ArchiSteamFarm.Storage;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json.Linq;
+using Microsoft.Extensions.Hosting;
 
 namespace ArchiSteamFarm.IPC.Controllers.Api;
 
 [Route("Api/ASF")]
 public sealed class ASFController : ArchiController {
-	/// <summary>
-	///     Encrypts data with ASF encryption mechanisms using provided details.
-	/// </summary>
-	[Consumes("application/json")]
+	internal static Version? PendingVersionUpdate { get; set; }
+
+	private readonly IHostApplicationLifetime ApplicationLifetime;
+
+	public ASFController(IHostApplicationLifetime applicationLifetime) {
+		ArgumentNullException.ThrowIfNull(applicationLifetime);
+
+		ApplicationLifetime = applicationLifetime;
+	}
+
+	[EndpointSummary("Encrypts data with ASF encryption mechanisms using provided details.")]
 	[HttpPost("Encrypt")]
-	[ProducesResponseType(typeof(GenericResponse<string>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<string>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public ActionResult<GenericResponse> ASFEncryptPost([FromBody] ASFEncryptRequest request) {
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (string.IsNullOrEmpty(request.StringToEncrypt)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(request.StringToEncrypt))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(request.StringToEncrypt))));
 		}
 
 		string? encryptedString = Actions.Encrypt(request.CryptoMethod, request.StringToEncrypt);
@@ -57,11 +68,9 @@ public sealed class ASFController : ArchiController {
 		return Ok(new GenericResponse<string>(encryptedString));
 	}
 
-	/// <summary>
-	///     Fetches common info related to ASF as a whole.
-	/// </summary>
+	[EndpointSummary("Fetches common info related to ASF as a whole")]
 	[HttpGet]
-	[ProducesResponseType(typeof(GenericResponse<ASFResponse>), (int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse<ASFResponse>>((int) HttpStatusCode.OK)]
 	public ActionResult<GenericResponse<ASFResponse>> ASFGet() {
 		if (ASF.GlobalConfig == null) {
 			throw new InvalidOperationException(nameof(ASF.GlobalConfig));
@@ -69,23 +78,20 @@ public sealed class ASFController : ArchiController {
 
 		uint memoryUsage = (uint) GC.GetTotalMemory(false) / 1024;
 
-		ASFResponse result = new(SharedInfo.BuildInfo.Variant, SharedInfo.BuildInfo.CanUpdate, ASF.GlobalConfig, memoryUsage, OS.ProcessStartTime, SharedInfo.Version);
+		ASFResponse result = new(BuildInfo.Variant, BuildInfo.CanUpdate, ASF.GlobalConfig, memoryUsage, OS.ProcessStartTime, SharedInfo.Version);
 
 		return Ok(new GenericResponse<ASFResponse>(result));
 	}
 
-	/// <summary>
-	///     Hashes data with ASF hashing mechanisms using provided details.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Hashes data with ASF hashing mechanisms using provided details")]
 	[HttpPost("Hash")]
-	[ProducesResponseType(typeof(GenericResponse<string>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse<string>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public ActionResult<GenericResponse> ASFHashPost([FromBody] ASFHashRequest request) {
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (string.IsNullOrEmpty(request.StringToHash)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsEmpty, nameof(request.StringToHash))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty(nameof(request.StringToHash))));
 		}
 
 		string hash = Actions.Hash(request.HashingMethod, request.StringToHash);
@@ -93,13 +99,10 @@ public sealed class ASFController : ArchiController {
 		return Ok(new GenericResponse<string>(hash));
 	}
 
-	/// <summary>
-	///     Updates ASF's global config.
-	/// </summary>
-	[Consumes("application/json")]
+	[EndpointSummary("Updates ASF's global config")]
 	[HttpPost]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.BadRequest)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
 	public async Task<ActionResult<GenericResponse>> ASFPost([FromBody] ASFRequest request) {
 		ArgumentNullException.ThrowIfNull(request);
 
@@ -119,14 +122,18 @@ public sealed class ASFController : ArchiController {
 			request.GlobalConfig.IPCPassword = ASF.GlobalConfig.IPCPassword;
 		}
 
+		if (!request.GlobalConfig.IsLicenseIDSet && ASF.GlobalConfig.IsLicenseIDSet) {
+			request.GlobalConfig.LicenseID = ASF.GlobalConfig.LicenseID;
+		}
+
 		if (!request.GlobalConfig.IsWebProxyPasswordSet && ASF.GlobalConfig.IsWebProxyPasswordSet) {
 			request.GlobalConfig.WebProxyPassword = ASF.GlobalConfig.WebProxyPassword;
 		}
 
 		if (ASF.GlobalConfig.AdditionalProperties is { Count: > 0 }) {
-			request.GlobalConfig.AdditionalProperties ??= new Dictionary<string, JToken>(ASF.GlobalConfig.AdditionalProperties.Count, ASF.GlobalConfig.AdditionalProperties.Comparer);
+			request.GlobalConfig.AdditionalProperties ??= new Dictionary<string, JsonElement>(ASF.GlobalConfig.AdditionalProperties.Count, ASF.GlobalConfig.AdditionalProperties.Comparer);
 
-			foreach ((string key, JToken value) in ASF.GlobalConfig.AdditionalProperties.Where(property => !request.GlobalConfig.AdditionalProperties.ContainsKey(property.Key))) {
+			foreach ((string key, JsonElement value) in ASF.GlobalConfig.AdditionalProperties.Where(property => !request.GlobalConfig.AdditionalProperties.ContainsKey(property.Key))) {
 				request.GlobalConfig.AdditionalProperties.Add(key, value);
 			}
 
@@ -138,7 +145,7 @@ public sealed class ASFController : ArchiController {
 		if (string.IsNullOrEmpty(filePath)) {
 			ASF.ArchiLogger.LogNullError(filePath);
 
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(filePath))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(filePath))));
 		}
 
 		bool result = await GlobalConfig.Write(filePath, request.GlobalConfig).ConfigureAwait(false);
@@ -146,46 +153,63 @@ public sealed class ASFController : ArchiController {
 		return Ok(new GenericResponse(result));
 	}
 
-	/// <summary>
-	///     Makes ASF shutdown itself.
-	/// </summary>
+	[EndpointSummary("Makes ASF shutdown itself")]
 	[HttpPost("Exit")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
 	public ActionResult<GenericResponse> ExitPost() {
 		(bool success, string message) = Actions.Exit();
 
 		return Ok(new GenericResponse(success, message));
 	}
 
-	/// <summary>
-	///     Makes ASF restart itself.
-	/// </summary>
+	[EndpointSummary("Makes ASF restart itself")]
 	[HttpPost("Restart")]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
 	public ActionResult<GenericResponse> RestartPost() {
 		(bool success, string message) = Actions.Restart();
 
 		return Ok(new GenericResponse(success, message));
 	}
 
-	/// <summary>
-	///     Makes ASF update itself.
-	/// </summary>
+	[EndpointSummary("Makes ASF update itself")]
 	[HttpPost("Update")]
-	[ProducesResponseType(typeof(GenericResponse<string>), (int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse<string>>((int) HttpStatusCode.OK)]
 	public async Task<ActionResult<GenericResponse<string>>> UpdatePost([FromBody] UpdateRequest request) {
 		ArgumentNullException.ThrowIfNull(request);
 
 		if (request.Channel.HasValue && !Enum.IsDefined(request.Channel.Value)) {
-			return BadRequest(new GenericResponse(false, string.Format(CultureInfo.CurrentCulture, Strings.ErrorIsInvalid, nameof(request.Channel))));
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsInvalid(nameof(request.Channel))));
 		}
 
-		(bool success, string? message, Version? version) = await Actions.Update(request.Channel).ConfigureAwait(false);
+		// Update process can result in kestrel shutdown request, just before patching the files
+		// In this case, we have very little opportunity to do anything, especially we will not have access to the return value of the action
+		// That's because update action will synchronously stop the kestrel, and wait for it before proceeding with an update, and that'll wait for us finishing the request, never happening
+		// Therefore, we'll allow this action to proceed while listening for application shutdown request, if it happens, we'll do our best by getting alternative signal that update is proceeding
+		TaskCompletionSource<bool> applicationStopping = new();
 
-		if (string.IsNullOrEmpty(message)) {
-			message = success ? Strings.Success : Strings.WarningFailed;
+		CancellationTokenRegistration applicationStoppingRegistration = ApplicationLifetime.ApplicationStopping.Register(() => applicationStopping.SetResult(true));
+
+		await using (applicationStoppingRegistration.ConfigureAwait(false)) {
+			Task<(bool Success, string? Message, Version? Version)> updateTask = Actions.Update(request.Channel, request.Forced);
+
+			bool success;
+			string? message = null;
+			Version? version;
+
+			if (await Task.WhenAny(updateTask, applicationStopping.Task).ConfigureAwait(false) == updateTask) {
+				(success, message, version) = await updateTask.ConfigureAwait(false);
+			} else {
+				// It's almost guaranteed that this is the result of update process requesting kestrel shutdown
+				// However, we're still going to check PendingVersionUpdate, which should be set by the update process as alternative way to inform us about pending update
+				version = PendingVersionUpdate;
+				success = version != null;
+			}
+
+			if (string.IsNullOrEmpty(message)) {
+				message = success ? Strings.Success : Strings.WarningFailed;
+			}
+
+			return Ok(new GenericResponse<string>(success, message, version?.ToString()));
 		}
-
-		return Ok(new GenericResponse<string>(success, message!, version?.ToString()));
 	}
 }

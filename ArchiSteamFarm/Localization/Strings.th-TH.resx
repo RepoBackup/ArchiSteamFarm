@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -89,9 +87,7 @@ StackTrace:
 {2}</value>
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
-	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>ออกจากโปรแกรมด้วยรหัสข้อผิดพลาดที่ไม่ใช่ศูนย์!</value>
-	</data>
+	
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>คำขอล้มเหลว: {0}</value>
 		<comment>{0} will be replaced by URL of the request</comment>
@@ -122,8 +118,13 @@ StackTrace:
 	<data name="ErrorUpdateCheckFailed" xml:space="preserve">
 		<value>ไม่สามารถตรวจสอบเวอร์ชั่นล่าสุดได้!</value>
 	</data>
-	
-	
+	<data name="ErrorUpdateNoAssetForThisVersion" xml:space="preserve">
+		<value>ไม่สามารถดำเนินการอัพเดตต่อได้เนื่องจากไม่มีแอทเซทซที่ใช้กับเวอร์ชั่นที่ทำงานอยู่ตอนนี้! 
+อัพเดตอัตโนมัติไม่สามารถดำเนินได้</value>
+	</data>
+	<data name="ErrorUpdateNoAssets" xml:space="preserve">
+		<value>ไม่สามารถดำเนินการอัพเดตได้เนื่อจากเวอร์ชั่นดังกล่าวไม่มีแอทเซทซใดๆอยู่!</value>
+	</data>
 	
 	<data name="Exiting" xml:space="preserve">
 		<value>กำลังออก…</value>
@@ -184,6 +185,7 @@ StackTrace:
 		<value>เวอร์ชันบนเครื่อง: {0} | เวอร์ชันบนเซิร์ฟเวอร์: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
 	</data>
+	
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>โปรดป้อนรหัส 2FA ของคุณจากแอปยืนยันตัวตน Steam ของคุณ: </value>
 		<comment>Please note that this translation should end with space</comment>
@@ -438,7 +440,6 @@ StackTrace:
 		<value>กำลังเชื่อมต่อ...</value>
 	</data>
 	
-	
 	<data name="BotStopping" xml:space="preserve">
 		<value>กำลังหยุด...</value>
 	</data>
@@ -474,8 +475,6 @@ StackTrace:
 เวลาทํางานของกระบวนการ: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
 	</data>
-	
-	
 	
 	<data name="BotRefreshingPackagesData" xml:space="preserve">
 		<value>กำลังรีเฟรชข้อมูลแพ็กเกจ…</value>
@@ -556,12 +555,10 @@ StackTrace:
 	
 	
 	
-	
-	
-	
 	<data name="FetchingChecksumFromRemoteServer" xml:space="preserve">
 		<value>กำลังดึงข้อมูล checksum จากเซิร์ฟเวอร์ระยะไกล...</value>
 	</data>
+	
 	
 	
 	
@@ -572,6 +569,23 @@ StackTrace:
 		<value>โปรดกรอกคีย์รหัสลับของคุณ: </value>
 		<comment>Please note that this translation should end with space</comment>
 	</data>
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 	
 </root>

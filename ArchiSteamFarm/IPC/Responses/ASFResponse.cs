@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,69 +22,69 @@
 // limitations under the License.
 
 using System;
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using ArchiSteamFarm.Storage;
-using Newtonsoft.Json;
 
 namespace ArchiSteamFarm.IPC.Responses;
 
 public sealed class ASFResponse {
-	/// <summary>
-	///     ASF's build variant.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("ASF's build variant")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public string BuildVariant { get; private set; }
+	public string BuildVariant { get; private init; }
 
-	/// <summary>
-	///     A value specifying whether this variant of ASF is capable of auto-update.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("A value specifying whether this variant of ASF is capable of auto-update")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public bool CanUpdate { get; private set; }
+	public bool CanUpdate { get; private init; }
 
-	/// <summary>
-	///     Currently loaded ASF's global config.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("Currently loaded ASF's global config")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public GlobalConfig GlobalConfig { get; private set; }
+	public GlobalConfig GlobalConfig { get; private init; }
 
-	/// <summary>
-	///     Current amount of managed memory being used by the process, in kilobytes.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("Current amount of managed memory being used by the process, in kilobytes")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public uint MemoryUsage { get; private set; }
+	public uint MemoryUsage { get; private init; }
 
-	/// <summary>
-	///     Start date of the process.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("Start date of the process")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public DateTime ProcessStartTime { get; private set; }
+	public DateTime ProcessStartTime { get; private init; }
 
-	/// <summary>
-	///     Boolean value specifying whether ASF has been started with a --service parameter.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("Boolean value specifying whether ASF has been started with a --service parameter")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public bool Service { get; private set; }
+	public bool Service { get; private init; }
 
-	/// <summary>
-	///     ASF version of currently running binary.
-	/// </summary>
-	[JsonProperty(Required = Required.Always)]
+	[Description("ASF version of currently running binary")]
+	[JsonInclude]
+	[JsonRequired]
 	[Required]
-	public Version Version { get; private set; }
+	public Version Version { get; private init; }
 
 	internal ASFResponse(string buildVariant, bool canUpdate, GlobalConfig globalConfig, uint memoryUsage, DateTime processStartTime, Version version) {
-		BuildVariant = !string.IsNullOrEmpty(buildVariant) ? buildVariant : throw new ArgumentNullException(nameof(buildVariant));
+		ArgumentException.ThrowIfNullOrEmpty(buildVariant);
+		ArgumentNullException.ThrowIfNull(globalConfig);
+		ArgumentOutOfRangeException.ThrowIfZero(memoryUsage);
+		ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(processStartTime, DateTime.UnixEpoch);
+		ArgumentNullException.ThrowIfNull(version);
+
+		BuildVariant = buildVariant;
 		CanUpdate = canUpdate;
-		GlobalConfig = globalConfig ?? throw new ArgumentNullException(nameof(globalConfig));
-		MemoryUsage = memoryUsage > 0 ? memoryUsage : throw new ArgumentOutOfRangeException(nameof(memoryUsage));
-		ProcessStartTime = processStartTime > DateTime.MinValue ? processStartTime : throw new ArgumentOutOfRangeException(nameof(processStartTime));
-		Version = version ?? throw new ArgumentNullException(nameof(version));
+		GlobalConfig = globalConfig;
+		MemoryUsage = memoryUsage;
+		ProcessStartTime = processStartTime;
+		Version = version;
 
 		Service = Program.Service;
 	}

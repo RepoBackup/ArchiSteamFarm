@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,15 +23,18 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Composition;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Plugins.Interfaces;
 using ArchiSteamFarm.Steam;
 using ArchiSteamFarm.Steam.Data;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using ArchiSteamFarm.Steam.Exchange;
 using SteamKit2;
 
 namespace ArchiSteamFarm.CustomPlugins.ExamplePlugin;
@@ -40,34 +45,38 @@ namespace ArchiSteamFarm.CustomPlugins.ExamplePlugin;
 // Your plugin class should inherit the plugin interfaces it wants to handle
 // If you do not want to handle a particular action (e.g. OnBotMessage that is offered in IBotMessage), it's the best idea to not inherit it at all
 // This will keep your code compact, efficient and less dependent. You can always add additional interfaces when you'll need them, this example project will inherit quite a bit of them to show you potential usage
-internal sealed class ExamplePlugin : IASF, IBot, IBotCommand2, IBotConnection, IBotFriendRequest, IBotMessage, IBotModules, IBotTradeOffer {
+[SuppressMessage("ReSharper", "MemberCanBeFileLocal")]
+internal sealed class ExamplePlugin : IASF, IBot, IBotCommand2, IBotConnection, IBotFriendRequest, IBotMessage, IBotModules, IBotTradeOffer2 {
 	// This is used for identification purposes, typically you want to use a friendly name of your plugin here, such as the name of your main class
 	// Please note that this property can have direct dependencies only on structures that were initialized by the constructor, as it's possible to be called before OnLoaded() takes place
+	[JsonInclude]
 	public string Name => nameof(ExamplePlugin);
 
 	// This will be displayed to the user and written in the log file, typically you should point it to the version of your library, but alternatively you can do some more advanced logic if you'd like to
 	// Please note that this property can have direct dependencies only on structures that were initialized by the constructor, as it's possible to be called before OnLoaded() takes place
+	[JsonInclude]
 	public Version Version => typeof(ExamplePlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
 
-	// Plugins can expose custom properties for our GET /Api/Plugins API call, simply annotate them with [JsonProperty] (or keep public)
-	[JsonProperty]
-	public bool CustomIsEnabledField { get; private set; } = true;
+	// Plugins can expose custom properties for our GET /Api/Plugins API call, simply annotate them with [JsonInclude] (or keep public)
+	[JsonInclude]
+	[JsonRequired]
+	[Required]
+	public bool CustomIsEnabledField { get; private init; } = true;
 
 	// This method, apart from being called before any bot initialization takes place, allows you to read custom global config properties that are not recognized by ASF
 	// Thanks to that, you can extend default ASF config with your own stuff, then parse it here in order to customize your plugin during runtime
 	// Keep in mind that, as noted in the interface, additionalConfigProperties can be null if no custom, unrecognized properties are found by ASF, you should handle that case appropriately
 	// In addition to that, this method also guarantees that all plugins were already OnLoaded(), which allows cross-plugins-communication to be possible
-	public Task OnASFInit(IReadOnlyDictionary<string, JToken>? additionalConfigProperties = null) {
+	public Task OnASFInit(IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null) {
 		if (additionalConfigProperties == null) {
 			return Task.CompletedTask;
 		}
 
-		foreach ((string configProperty, JToken configValue) in additionalConfigProperties) {
+		foreach ((string configProperty, JsonElement configValue) in additionalConfigProperties) {
 			// It's a good idea to prefix your custom properties with the name of your plugin, so there will be no possible conflict of ASF or other plugins using the same name, neither now or in the future
 			switch (configProperty) {
-				case $"{nameof(ExamplePlugin)}TestProperty" when configValue.Type == JTokenType.Boolean:
-					bool exampleBooleanValue = configValue.Value<bool>();
-					ASF.ArchiLogger.LogGenericInfo($"{nameof(ExamplePlugin)}TestProperty boolean property has been found with a value of: {exampleBooleanValue}");
+				case $"{nameof(ExamplePlugin)}TestProperty" when configValue.ValueKind == JsonValueKind.True:
+					ASF.ArchiLogger.LogGenericInfo($"{nameof(ExamplePlugin)}TestProperty boolean property has been found with a value of true");
 
 					break;
 			}
@@ -131,9 +140,9 @@ internal sealed class ExamplePlugin : IASF, IBot, IBotCommand2, IBotConnection, 
 	// This method, apart from being called during bot modules initialization, allows you to read custom bot config properties that are not recognized by ASF
 	// Thanks to that, you can extend default bot config with your own stuff, then parse it here in order to customize your plugin during runtime
 	// Keep in mind that, as noted in the interface, additionalConfigProperties can be null if no custom, unrecognized properties are found by ASF, you should handle that case appropriately
-	// Also keep in mind that this function can be called multiple times, e.g. when user edits his bot configs during runtime
+	// Also keep in mind that this function can be called multiple times, e.g. when user edits their bot configs during runtime
 	// Take a look at OnASFInit() for example parsing code
-	public async Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JToken>? additionalConfigProperties = null) {
+	public async Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null) {
 		// For example, we'll ensure that every bot starts paused regardless of Paused property, in order to do this, we'll just call Pause here in InitModules()
 		// Thanks to the fact that this method is called with each bot config reload, we'll ensure that our bot stays paused even if it'd get unpaused otherwise
 		bot.ArchiLogger.LogGenericInfo("Pausing this bot as asked from the plugin");
@@ -164,14 +173,14 @@ internal sealed class ExamplePlugin : IASF, IBot, IBotCommand2, IBotConnection, 
 		// If this message doesn't come from one of our bots, we can reply to the user in some pre-defined way
 		bot.ArchiLogger.LogGenericTrace("Hey boss, we got some unknown message here!");
 
-		return Task.FromResult((string?) "I didn't get that, did you mean to use a command?");
+		return Task.FromResult<string?>("I didn't get that, did you mean to use a command?");
 	}
 
 	// This method is called when bot receives a trade offer that ASF isn't willing to accept (ignored and rejected trades)
 	// It allows you not only to analyze such trades, but generate a response whether ASF should accept it (true), or proceed like usual (false)
 	// Thanks to that, you can implement custom rules for all trades that aren't handled by ASF, for example cross-set trading on your own custom rules
 	// You'd implement your own logic here, as an example we'll allow all trades to be accepted if the bot's name starts from "TrashBot"
-	public Task<bool> OnBotTradeOffer(Bot bot, TradeOffer tradeOffer) => Task.FromResult(bot.BotName.StartsWith("TrashBot", StringComparison.OrdinalIgnoreCase));
+	public Task<bool> OnBotTradeOffer(Bot bot, TradeOffer tradeOffer, ParseTradeResult.EResult asfResult) => Task.FromResult(bot.BotName.StartsWith("TrashBot", StringComparison.OrdinalIgnoreCase));
 
 	// This is the earliest method that will be called, right after loading the plugin, long before any bot initialization takes place
 	// It's a good place to initialize all potential (non-bot-specific) structures that you will need across lifetime of your plugin, such as global timers, concurrent dictionaries and alike

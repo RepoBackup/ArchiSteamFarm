@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -110,8 +108,8 @@
 		<comment>{0} will be replaced by the number (count this batch) of app infos retrieved</comment>
 	</data>
 	<data name="BotFinishedRetrievingDepotKeys" xml:space="preserve">
-		<value>成功檢索 {1} 個 Depot 金鑰中的 {0} 個。</value>
-		<comment>{0} will be replaced by the number (count this batch) of depot keys that were successfully retrieved, {1} will be replaced by the number (count this batch) of depot keys that were supposed to be retrieved</comment>
+		<value>已完成 {0}/{1} 個 Depot 金鑰請求。</value>
+		<comment>{0} will be replaced by the number (count this batch) of depot key requests that were successfully answered, {1} will be replaced by the number (count this batch) of depot key requests that were supposed to be sent</comment>
 	</data>
 	<data name="BotFinishedRetrievingTotalDepots" xml:space="preserve">
 		<value>已完成檢索共 {0} 個應用程式的 Depot 金鑰。</value>

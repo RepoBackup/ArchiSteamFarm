@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +23,7 @@
 
 using System;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.IPC.Controllers.Api;
@@ -38,14 +41,16 @@ public sealed class CatController : ArchiController {
 	///     Fetches URL of a random cat picture.
 	/// </summary>
 	[HttpGet]
-	[ProducesResponseType(typeof(GenericResponse<Uri>), (int) HttpStatusCode.OK)]
-	[ProducesResponseType(typeof(GenericResponse), (int) HttpStatusCode.ServiceUnavailable)]
+	[ProducesResponseType<GenericResponse<Uri>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.ServiceUnavailable)]
 	public async Task<ActionResult<GenericResponse>> CatGet() {
 		if (ASF.WebBrowser == null) {
 			throw new InvalidOperationException(nameof(ASF.WebBrowser));
 		}
 
-		Uri? url = await CatAPI.GetRandomCatURL(ASF.WebBrowser).ConfigureAwait(false);
+		CancellationToken cancellationToken = HttpContext.RequestAborted;
+
+		Uri? url = await CatAPI.GetRandomCatURL(ASF.WebBrowser, cancellationToken).ConfigureAwait(false);
 
 		return url != null ? Ok(new GenericResponse<Uri>(url)) : StatusCode((int) HttpStatusCode.ServiceUnavailable, new GenericResponse(false));
 	}

@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,10 +38,17 @@ public sealed class StreamResponse : BasicResponse, IAsyncDisposable, IDisposabl
 
 	private readonly HttpResponseMessage ResponseMessage;
 
-	internal StreamResponse(HttpResponseMessage httpResponseMessage, Stream content) : this(httpResponseMessage) => Content = content ?? throw new ArgumentNullException(nameof(content));
+	internal StreamResponse(HttpResponseMessage httpResponseMessage, Stream content) : this(httpResponseMessage) {
+		ArgumentNullException.ThrowIfNull(httpResponseMessage);
+		ArgumentNullException.ThrowIfNull(content);
+
+		Content = content;
+	}
 
 	internal StreamResponse(HttpResponseMessage httpResponseMessage) : base(httpResponseMessage) {
-		ResponseMessage = httpResponseMessage ?? throw new ArgumentNullException(nameof(httpResponseMessage));
+		ArgumentNullException.ThrowIfNull(httpResponseMessage);
+
+		ResponseMessage = httpResponseMessage;
 		Length = httpResponseMessage.Content.Headers.ContentLength.GetValueOrDefault();
 	}
 

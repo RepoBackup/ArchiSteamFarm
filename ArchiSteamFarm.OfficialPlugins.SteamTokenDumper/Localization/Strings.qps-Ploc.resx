@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -71,7 +69,7 @@
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin")</comment>
 	</data>
 	<data name="PluginInitializedAndEnabled" xml:space="preserve">
-		<value>{0} HAS BEEN INITIALIZD SUCCESFULLY, THANK U IN ADVANCE 4 UR HALP. TEH FURST SUBMISHUN WILL HAPPEN IN APPROXIMATELY {1} FRUM NAO.</value>
+		<value>{0} HAS BEEN INITIALIZD SUCCESFULLY, THANK U IN ADVANCE 4 UR HALP. TEH FURST SUBMISHUN WILL HAPPEN IN APPROXIMATELY {1}.</value>
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin"), {1} will be replaced by translated TimeSpan string (such as "53 minutes")</comment>
 	</data>
 	<data name="FileCouldNotBeLoadedFreshInit" xml:space="preserve">
@@ -109,10 +107,7 @@
 		<value>FINISHD RETRIEVIN {0} APP INFOS.</value>
 		<comment>{0} will be replaced by the number (count this batch) of app infos retrieved</comment>
 	</data>
-	<data name="BotFinishedRetrievingDepotKeys" xml:space="preserve">
-		<value>SUCCESFULLY RETRIEVD {0} OUT OV {1} DEPOT KEYS.</value>
-		<comment>{0} will be replaced by the number (count this batch) of depot keys that were successfully retrieved, {1} will be replaced by the number (count this batch) of depot keys that were supposed to be retrieved</comment>
-	</data>
+	
 	<data name="BotFinishedRetrievingTotalDepots" xml:space="preserve">
 		<value>FINISHD RETRIEVIN ALL DEPOT KEYS 4 TOTAL OV {0} APPS.</value>
 		<comment>{0} will be replaced by the number (total count) of apps retrieved</comment>

@@ -1,10 +1,12 @@
-﻿//     _                _      _  ____   _                           _____
+﻿// ----------------------------------------------------------------------------------------------
+//     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +28,7 @@ using System.Threading;
 namespace ArchiSteamFarm.Core;
 
 internal static class AprilFools {
-	private static readonly object LockObject = new();
+	private static readonly Lock Lock = new();
 
 	// We don't care about CurrentCulture global config property, because April Fools are never initialized in this case
 	private static readonly CultureInfo OriginalCulture = CultureInfo.CurrentCulture;
@@ -36,7 +38,7 @@ internal static class AprilFools {
 	internal static void Init(object? state = null) {
 		DateTime now = DateTime.Now;
 
-		if (now is { Month: 4, Day: 1 }) {
+		if (now is (_, 4, 1)) {
 			try {
 				CultureInfo.DefaultThreadCurrentCulture = CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.CreateSpecificCulture(SharedInfo.LolcatCultureName);
 			} catch (Exception e) {
@@ -47,7 +49,7 @@ internal static class AprilFools {
 
 			TimeSpan aprilFoolsEnd = TimeSpan.FromDays(1) - now.TimeOfDay;
 
-			lock (LockObject) {
+			lock (Lock) {
 				Timer.Change(aprilFoolsEnd + TimeSpan.FromMilliseconds(100), Timeout.InfiniteTimeSpan);
 			}
 
@@ -70,7 +72,7 @@ internal static class AprilFools {
 		// Timer can accept only dueTimes up to 2^32 - 2
 		uint dueTime = (uint) Math.Min(uint.MaxValue - 1, (ulong) aprilFoolsStart.TotalMilliseconds + 100);
 
-		lock (LockObject) {
+		lock (Lock) {
 			Timer.Change(dueTime, Timeout.Infinite);
 		}
 	}

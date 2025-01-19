@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -70,10 +68,7 @@
 		<value>{0} bol na základe vašej konfigurácie vypnutý. Ak máte záujem pomôcť so zberom údajov pre SteamDB, navštívte našu wiki.</value>
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin")</comment>
 	</data>
-	<data name="PluginInitializedAndEnabled" xml:space="preserve">
-		<value>{0} bol úspešne spustený. Týmto vám ďakujeme za vašu pomoc. Prvý zápis sa udej od teraz za {1}.</value>
-		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin"), {1} will be replaced by translated TimeSpan string (such as "53 minutes")</comment>
-	</data>
+	
 	<data name="FileCouldNotBeLoadedFreshInit" xml:space="preserve">
 		<value>{0} sa nedokázal načítať, bude načítaný nanovo...</value>
 		<comment>{0} will be replaced by the name of the file (e.g. "GlobalCache")</comment>
@@ -161,7 +156,13 @@
 		<value>{0} inicializovaných, modul nebude pracovať so žiadnym: {1}.</value>
 		<comment>{0} will be replaced by the name of the config property (e.g. "SecretPackageIDs"), {1} will be replaced by list of the objects (IDs, numbers), separated by a comma</comment>
 	</data>
-	
-	
-	
+	<data name="LoadingGlobalCache" xml:space="preserve">
+		<value>Načítanie globálnej vyrovnávacej pamäti STD...</value>
+	</data>
+	<data name="ValidatingGlobalCacheIntegrity" xml:space="preserve">
+		<value>Overovanie globálnej vyrovnávacej pamäti STD...</value>
+	</data>
+	<data name="GlobalCacheIntegrityValidationFailed" xml:space="preserve">
+		<value>Overovanie globálnej vyrovnávacej pamäti STD sa nepodarilo. To naznačuje, že mohlo dôjsť k poškodeniu súboru/pamäti, miesto toho bude inicializovaná nová inštancia.</value>
+	</data>
 </root>

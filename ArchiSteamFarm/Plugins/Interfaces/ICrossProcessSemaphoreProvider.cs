@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +27,11 @@ using JetBrains.Annotations;
 
 namespace ArchiSteamFarm.Plugins.Interfaces;
 
+/// <inheritdoc />
+/// <summary>
+///     Implementing this interface allows you to provide custom cross-process semaphore, which is used for synchronizing multiple ASF instances with their limiters.
+///     Custom cross-process semaphore might be useful if you wanted to extend cross-process semaphore offered by ASF, e.g. by utilizing remote-oriented tools like redis and allowing ASF instances over several different machines to synchronize with each other.
+/// </summary>
 [PublicAPI]
 public interface ICrossProcessSemaphoreProvider : IPlugin {
 	/// <summary>

@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="PluginDisabledMissingBuildToken" xml:space="preserve">
@@ -70,10 +68,7 @@
 		<value>{0} yapılandırmanıza göre şu anda devre dışı. SteamDB'ye veri gönderimi için yardımcı olmak isterseniz viki sayfamızı ziyaret edin.</value>
 		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin")</comment>
 	</data>
-	<data name="PluginInitializedAndEnabled" xml:space="preserve">
-		<value>{0} başarılı bir şekilde kuruldu, yardımınız için şimdiden teşekkürler. İlk gönderim {1} içinde gerçekleşecektir.</value>
-		<comment>{0} will be replaced by the name of the plugin (e.g. "SteamTokenDumperPlugin"), {1} will be replaced by translated TimeSpan string (such as "53 minutes")</comment>
-	</data>
+	
 	<data name="FileCouldNotBeLoadedFreshInit" xml:space="preserve">
 		<value>{0} yüklenemedi, yeni bir örnek başlatılacak...</value>
 		<comment>{0} will be replaced by the name of the file (e.g. "GlobalCache")</comment>
@@ -109,10 +104,7 @@
 		<value>{0} uygulama bilgisinin alınması tamamlandı.</value>
 		<comment>{0} will be replaced by the number (count this batch) of app infos retrieved</comment>
 	</data>
-	<data name="BotFinishedRetrievingDepotKeys" xml:space="preserve">
-		<value>{0}/{1} depo anahtarı başarıyla alındı.</value>
-		<comment>{0} will be replaced by the number (count this batch) of depot keys that were successfully retrieved, {1} will be replaced by the number (count this batch) of depot keys that were supposed to be retrieved</comment>
-	</data>
+	
 	<data name="BotFinishedRetrievingTotalDepots" xml:space="preserve">
 		<value>Toplam {0} uygulama için tüm depo anahtarlarının alınması tamamlandı.</value>
 		<comment>{0} will be replaced by the number (total count) of apps retrieved</comment>
@@ -165,12 +157,12 @@
 		<comment>{0} will be replaced by the name of the config property (e.g. "SecretPackageIDs"), {1} will be replaced by list of the objects (IDs, numbers), separated by a comma</comment>
 	</data>
 	<data name="LoadingGlobalCache" xml:space="preserve">
-		<value>STD küresel önbelleği yükleniyor...</value>
+		<value>STD genel önbelleği yükleniyor...</value>
 	</data>
 	<data name="ValidatingGlobalCacheIntegrity" xml:space="preserve">
-		<value>STD küresel önbellek bütünlüğü doğrulanıyor...</value>
+		<value>STD genel önbellek bütünlüğünü doğruluyor...</value>
 	</data>
 	<data name="GlobalCacheIntegrityValidationFailed" xml:space="preserve">
-		<value>STD küresel önbellek bütünlüğü doğrulanamadı. Bu, olası bir dosya/bellek bozulması olduğunu gösterir, bunun yerine yeni bir örnek başlatılacaktır.</value>
+		<value>STD genel önbellek bütünlüğü doğrulanamadı. Bu, olası bir dosya/bellek bozulmasına işaret eder, bunun yerine yeni bir örnek başlatılır.</value>
 	</data>
 </root>

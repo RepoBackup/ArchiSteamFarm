@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,42 +22,94 @@
 // limitations under the License.
 
 using System;
-using System.Collections.Generic;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Localization;
+using JetBrains.Annotations;
 using SteamKit2;
 
 namespace ArchiSteamFarm.Steam.Integration;
 
-internal static class SteamUtilities {
+public static class SteamUtilities {
+	[PublicAPI]
+	public static string ToSteamClientLanguage(this CultureInfo cultureInfo) {
+		ArgumentNullException.ThrowIfNull(cultureInfo);
+
+		// We're doing our best here to map provided CultureInfo to language supported by Steam
+		return cultureInfo.TwoLetterISOLanguageName switch {
+			"bg" => "bulgarian",
+			"cs" => "czech",
+			"da" => "danish",
+			"de" => "german",
+			"es" when cultureInfo.Name is "es-419" or "es-AR" or "es-BO" or "es-BR" or "es-BZ" or "es-CL" or "es-CO" or "es-CR" or "es-CU" or "es-DO" or "es-EC" or "es-GQ" or "es-GT" or "es-HN" or "es-MX" or "es-NI" or "es-PA" or "es-PE" or "es-PH" or "es-PR" or "es-PY" or "es-SV" or "es-US" or "es-UY" or "es-VE" => "latam",
+			"es" => "spanish",
+			"el" => "greek",
+			"fr" => "french",
+			"fi" => "finnish",
+			"hu" => "hungarian",
+			"id" => "indonesian",
+			"it" => "italian",
+			"ko" => "koreana",
+			"nl" => "dutch",
+			"no" => "norwegian",
+			"pl" => "polish",
+			"pt" when cultureInfo.Name == "pt-BR" => "brazilian",
+			"pt" => "portuguese",
+			"ro" => "romanian",
+			"ru" => "russian",
+			"sv" => "swedish",
+			"th" => "thai",
+			"tr" => "turkish",
+			"uk" => "ukrainian",
+			"vi" => "vietnamese",
+			"zh" when cultureInfo.Name is "zh-Hant" or "zh-HK" or "zh-MO" or "zh-TW" => "tchinese",
+			"zh" => "schinese",
+			_ => "english"
+		};
+	}
+
 	internal static EResult? InterpretError(string errorText) {
-		if (string.IsNullOrEmpty(errorText)) {
-			throw new ArgumentNullException(nameof(errorText));
+		ArgumentException.ThrowIfNullOrEmpty(errorText);
+
+		if ((errorText == "Timeout") || errorText.StartsWith("batched request timeout", StringComparison.Ordinal)) {
+			return EResult.Timeout;
 		}
 
-		if (errorText.StartsWith("EYldRefreshAppIfNecessary", StringComparison.Ordinal)) {
-			return EResult.ServiceUnavailable;
+		if (errorText.StartsWith("Failed to get", StringComparison.Ordinal) || errorText.StartsWith("Failed to send", StringComparison.Ordinal)) {
+			return EResult.RemoteCallFailed;
 		}
 
-		int startIndex = errorText.LastIndexOf('(');
+		string errorCodeText;
 
-		if (startIndex < 0) {
-			return null;
+		Match match = GeneratedRegexes.InventoryEResult().Match(errorText);
+
+		if (match.Success && match.Groups.TryGetValue("EResult", out Group? groupResult)) {
+			errorCodeText = groupResult.Value;
+		} else {
+			int startIndex = errorText.LastIndexOf('(');
+
+			if (startIndex < 0) {
+				ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(errorText), errorText));
+
+				return null;
+			}
+
+			startIndex++;
+
+			int endIndex = errorText.IndexOf(')', startIndex + 1);
+
+			if (endIndex < 0) {
+				ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(errorText), errorText));
+
+				return null;
+			}
+
+			errorCodeText = errorText[startIndex..endIndex];
 		}
-
-		startIndex++;
-
-		int endIndex = errorText.IndexOf(')', startIndex + 1);
-
-		if (endIndex < 0) {
-			return null;
-		}
-
-		string errorCodeText = errorText[startIndex..endIndex];
 
 		if (!byte.TryParse(errorCodeText, out byte errorCode)) {
-			ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(errorCodeText), errorCodeText));
+			ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(errorText), errorText));
 
 			return null;
 		}
@@ -63,51 +117,9 @@ internal static class SteamUtilities {
 		EResult result = (EResult) errorCode;
 
 		if (!Enum.IsDefined(result)) {
-			ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(EResult), result));
+			ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(errorText), errorText));
 
 			return null;
-		}
-
-		return result;
-	}
-
-	internal static Dictionary<uint, string>? ParseItems(this SteamApps.PurchaseResponseCallback callback) {
-		ArgumentNullException.ThrowIfNull(callback);
-
-		List<KeyValue> lineItems = callback.PurchaseReceiptInfo["lineitems"].Children;
-
-		if (lineItems.Count == 0) {
-			return null;
-		}
-
-		Dictionary<uint, string> result = new(lineItems.Count);
-
-		foreach (KeyValue lineItem in lineItems) {
-			uint packageID = lineItem["PackageID"].AsUnsignedInteger();
-
-			if (packageID == 0) {
-				// Coupons have PackageID of -1 (don't ask me why)
-				// We'll use ItemAppID in this case
-				packageID = lineItem["ItemAppID"].AsUnsignedInteger();
-
-				if (packageID == 0) {
-					ASF.ArchiLogger.LogNullError(packageID);
-
-					return null;
-				}
-			}
-
-			string? gameName = lineItem["ItemDescription"].AsString();
-
-			if (string.IsNullOrEmpty(gameName)) {
-				ASF.ArchiLogger.LogNullError(gameName);
-
-				return null;
-			}
-
-			// Apparently steam expects client to decode sent HTML
-			gameName = Uri.UnescapeDataString(gameName);
-			result[packageID] = gameName;
 		}
 
 		return result;

@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -90,7 +88,8 @@ StackTrace:
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
 	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Έξοδος με μη μηδενικό κωδικό σφάλματος!</value>
+		<value>Πραγματοποιείται έξοδος με κωδικό σφάλματος {0}!</value>
+		<comment>{0} will be replaced by error code (number)</comment>
 	</data>
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Αποτυχία αιτήματος: {0}</value>
@@ -189,6 +188,10 @@ StackTrace:
 	<data name="UpdateVersionInfo" xml:space="preserve">
 		<value>Τοπική έκδοση: {0} | Απομακρυσμένη έκδοση: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
+	</data>
+	<data name="UserInputDeviceConfirmation" xml:space="preserve">
+		<value>Παρακαλώ ελέγξτε την εφαρμογή Steam για κινητά, θα πρέπει να έχετε λάβει μια ειδοποίηση έγκρισης σύνδεσης. Πληκτρολογήστε το Y εάν λάβατε και εγκρίνατε την ειδοποίηση, Ν αν θέλετε να παρέχετε τον κωδικό: </value>
+		<comment>Please note that this translation should end with space</comment>
 	</data>
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Εισάγετε τον κωδικό από την εφαρμογή επαληθευτή Steam σας: </value>
@@ -484,9 +487,6 @@ StackTrace:
 	<data name="BotHeartBeatFailed" xml:space="preserve">
 		<value>Αποτυχία αποσύνδεσης προγράμματος-πελάτη. Γίνεται εγκατάλειψη αυτού του bot!</value>
 	</data>
-	<data name="BotSteamDirectoryInitializationFailed" xml:space="preserve">
-		<value>Αδυναμία αρχικοποίησης SteamDirectory: η σύνδεση με το δίκτυο του Steam μπορεί να διαρκέσει πολύ περισσότερο από το συνηθισμένο!</value>
-	</data>
 	<data name="BotStopping" xml:space="preserve">
 		<value>Διακοπή...</value>
 	</data>
@@ -550,14 +550,6 @@ StackTrace:
 		<value>Τρέχουσα χρήση μνήμης: {0} MB.
 Χρόνος διεργασίας: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
-	</data>
-	<data name="ClearingDiscoveryQueue" xml:space="preserve">
-		<value>Εκκαθάριση σειράς ανακαλύψεων Steam #{0}...</value>
-		<comment>{0} will be replaced by queue number</comment>
-	</data>
-	<data name="DoneClearingDiscoveryQueue" xml:space="preserve">
-		<value>Ολοκληρώθηκε η εκκαθάριση σειράς ανακαλύψεων Steam #{0}.</value>
-		<comment>{0} will be replaced by queue number</comment>
 	</data>
 	<data name="BotOwnsOverviewPerGame" xml:space="preserve">
 		<value>{0}/{1} bot κατέχουν ήδη το παιχνίδι {2}.</value>
@@ -687,24 +679,12 @@ StackTrace:
 		<value>{0} αρχείο ρυθμίσεων θα μεταφερθεί στην τελευταία σύνταξη...</value>
 		<comment>{0} will be replaced with the relative path to the affected config file</comment>
 	</data>
-	<data name="WarningWeakIPCPassword" xml:space="preserve">
-		<value>Ο κωδικός πρόσβασης IPC φαίνεται να είναι αδύναμος. Εξετάστε το ενδεχόμενο να επιλέξετε έναν ισχυρότερο για αυξημένη ασφάλεια. Λεπτομέρειες: {0}</value>
-		<comment>{0} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakSteamPassword" xml:space="preserve">
-		<value>Ο κωδικός πρόσβασης Steam για το '{0}' φαίνεται να είναι αδύναμος. Εξετάστε το ενδεχόμενο να επιλέξετε έναν ισχυρότερο για αυξημένη ασφάλεια. Λεπτομέρειες: {1}</value>
-		<comment>{0} will be replaced by the affected bot name, {1} will be replaced by additional details about the password being considered weak</comment>
-	</data>
-	<data name="WarningWeakCryptKey" xml:space="preserve">
-		<value>Το κλειδί κρυπτογράφησής σας φαίνεται να είναι αδύναμο. Εξετάστε το ενδεχόμενο να επιλέξετε ένα ισχυρότερο για αυξημένη ασφάλεια. Λεπτομέρειες: {0}</value>
-		<comment>{0} will be replaced by additional details about the encryption key being considered weak</comment>
-	</data>
 	<data name="WarningTooShortCryptKey" xml:space="preserve">
 		<value>Το κλειδί κρυπτογράφησης σας είναι πολύ μικρό. Σας συνιστούμε να χρησιμοποιήσετε ένα που είναι τουλάχιστον {0} bytes (χαρακτήρες).</value>
 		<comment>{0} will be replaced by the number of bytes (characters) recommended</comment>
 	</data>
 	<data name="WarningDefaultCryptKeyUsedForHashing" xml:space="preserve">
-		<value>Χρησιμοποιείτε {0} ρύθμιση της ιδιότητας {1}, αλλά δεν παρείχατε ένα προσαρμοσμένο --cryptkey. Θα πρέπει να παρέχετε ένα προσαρμοσμένο --cryptkey για αυξημένη ασφάλεια.</value>
+		<value>Χρησιμοποιείτε τη ρύθμιση {0} της ιδιότητας {1}, αλλά δεν παρείχατε προσαρμοσμένο κλειδί κρυπτογράφησης. Προαιρετικά μπορείτε να παρέχετε ένα προσαρμοσμένο κλειδί κρυπτογράφησης για αυξημένη ασφάλεια.</value>
 		<comment>{0} will be replaced by the name of a particular setting (e.g. "SCrypt"), {1} will be replaced by the name of the property (e.g. "IPCPassword")</comment>
 	</data>
 	<data name="WarningDefaultCryptKeyUsedForEncryption" xml:space="preserve">
@@ -724,8 +704,9 @@ StackTrace:
 		<value>Επαλήθευση αθροίσματος ελέγχου του ληφθέντος δυαδικού έναντι αυτού από τον απομακρυσμένο διακομιστή...</value>
 	</data>
 	<data name="ChecksumMissing" xml:space="preserve">
-		<value>Ο απομακρυσμένος διακομιστής δεν γνωρίζει τίποτα σχετικά με την έκδοση στην οποία ενημερώνουμε. Αυτή η κατάσταση είναι δυνατή εάν η αποδέσμευση δημοσιεύτηκε πρόσφατα - αρνούμενη να προχωρήσει αμέσως στη διαδικασία επικαιροποίησης ως πρόσθετο μέτρο ασφαλείας.</value>
+		<value>Ο απομακρυσμένος διακομιστής δε γνωρίζει τίποτα σχετικά με την έκδοση στην οποία ενημερώνουμε. Αυτή η κατάσταση είναι πιθανή εάν η νέα έκδοση δημοσιεύτηκε πρόσφατα - Ως πρόσθετο μέτρο ασφαλείας το πρόγραμμα δε θα προβεί στην άμεση διαδικασία ενημέρωσης.</value>
 	</data>
+	
 	<data name="ChecksumWrong" xml:space="preserve">
 		<value>Ο απομακρυσμένος διακομιστής απάντησε με ένα διαφορετικό checksum, αυτό μπορεί να υποδεικνύει κατεστραμμένο download ή MITM attack, αρνούμενος να προχωρήσει με τη διαδικασία ενημέρωσης!</value>
 	</data>
@@ -740,5 +721,39 @@ StackTrace:
 		<value>Η διεύθυνση IP {0} δεν έχει αποκλειστεί!</value>
 		<comment>{0} will be replaced by an IP address which was requested to be unbanned from using IPC</comment>
 	</data>
+	<data name="WarningNoLicense" xml:space="preserve">
+		<value/>
+		<comment>{0} will be replaced by feature name (e.g. MatchActively)</comment>
+	</data>
+	<data name="WarningRegionRestrictedPackage" xml:space="preserve">
+		<value>Το ASF δεν είναι σε θέση να εκτελέσει την εφαρμογή {0} λόγω γεωγραφικού περιορισμού ως προς τη χώρα {1} που διαρκεί έως {2}.</value>
+		<comment>{0} will be replaced by app ID (number), {1} will be replaced by short country code (string, such as "PL"), {2} will be replaced by human-readable date (string).</comment>
+	</data>
+	
+	
+	
+	<data name="WarningSkipping" xml:space="preserve">
+		<value>Παράλειψη: {0}...</value>
+		<comment>{0} will be replaced by text value (string) of entry being skipped.</comment>
+	</data>
+	<data name="PluginUpdatesChecking" xml:space="preserve">
+		<value>Έλεγχος για ενημερώσεις πρόσθετων...</value>
+	</data>
+	<data name="PluginUpdateChecking" xml:space="preserve">
+		<value>Έλεγχος ενημέρωσης για το πρόσθετο {0}...</value>
+		<comment>{0} will be replaced by plugin name (string).</comment>
+	</data>
+	<data name="PluginUpdateNotFound" xml:space="preserve">
+		<value>Δεν υπάρχει διαθέσιμη ενημέρωση για το πρόσθετο {0}: {1} ≥ {2}.</value>
+		<comment>{0} will be replaced by plugin name (string), {1} will be replaced by current plugin's version, {2} will be replaced by remote plugin's version.</comment>
+	</data>
+	
+	
+	
+	
+	
+	
+	
+	
 	
 </root>

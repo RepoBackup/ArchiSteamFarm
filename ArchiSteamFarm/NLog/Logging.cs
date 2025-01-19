@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +23,6 @@
 
 using System;
 using System.ComponentModel;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -49,7 +50,7 @@ internal static class Logging {
 
 	internal static bool LogFileExists => File.Exists(SharedInfo.LogFile);
 
-	private static readonly ConcurrentHashSet<LoggingRule> ConsoleLoggingRules = new();
+	private static readonly ConcurrentHashSet<LoggingRule> ConsoleLoggingRules = [];
 	private static readonly SemaphoreSlim ConsoleSemaphore = new(1, 1);
 
 	private static string Backspace => "\b \b";
@@ -79,9 +80,7 @@ internal static class Logging {
 			throw new InvalidEnumArgumentException(nameof(userInputType), (int) userInputType, typeof(ASF.EUserInputType));
 		}
 
-		if (string.IsNullOrEmpty(botName)) {
-			throw new ArgumentNullException(nameof(botName));
-		}
+		ArgumentException.ThrowIfNullOrEmpty(botName);
 
 		if (Program.Service || (ASF.GlobalConfig?.Headless ?? GlobalConfig.DefaultHeadless)) {
 			ASF.ArchiLogger.LogGenericWarning(Strings.ErrorUserInputRunningInHeadlessMode);
@@ -101,6 +100,17 @@ internal static class Logging {
 					case ASF.EUserInputType.Cryptkey:
 						Console.Write(Bot.FormatBotResponse(Strings.UserInputCryptkey, botName));
 						result = ConsoleReadLineMasked();
+
+						break;
+					case ASF.EUserInputType.DeviceConfirmation:
+						while (true) {
+							Console.Write(Bot.FormatBotResponse(Strings.UserInputDeviceConfirmation, botName));
+							result = ConsoleReadLine();
+
+							if (string.IsNullOrEmpty(result) || result.Equals("Y", StringComparison.OrdinalIgnoreCase) || result.Equals("N", StringComparison.OrdinalIgnoreCase)) {
+								break;
+							}
+						}
 
 						break;
 					case ASF.EUserInputType.Login:
@@ -129,7 +139,7 @@ internal static class Logging {
 
 						break;
 					default:
-						ASF.ArchiLogger.LogGenericError(string.Format(CultureInfo.CurrentCulture, Strings.WarningUnknownValuePleaseReport, nameof(userInputType), userInputType));
+						ASF.ArchiLogger.LogGenericError(Strings.FormatWarningUnknownValuePleaseReport(nameof(userInputType), userInputType));
 
 						return null;
 				}
@@ -149,8 +159,7 @@ internal static class Logging {
 			ConsoleSemaphore.Release();
 		}
 
-		// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-		return !string.IsNullOrEmpty(result) ? result!.Trim() : null;
+		return !string.IsNullOrEmpty(result) ? result.Trim() : null;
 	}
 
 	internal static void InitCoreLoggers(bool uniqueInstance) {
@@ -173,9 +182,7 @@ internal static class Logging {
 
 		if (uniqueInstance) {
 			try {
-				if (!Directory.Exists(SharedInfo.ArchivalLogsDirectory)) {
-					Directory.CreateDirectory(SharedInfo.ArchivalLogsDirectory);
-				}
+				Directory.CreateDirectory(SharedInfo.ArchivalLogsDirectory);
 			} catch (Exception e) {
 				ASF.ArchiLogger.LogGenericException(e);
 			}
@@ -263,9 +270,7 @@ internal static class Logging {
 	}
 
 	private static async Task BeepUntilCanceled(CancellationToken cancellationToken, byte secondsDelay = 30) {
-		if (secondsDelay == 0) {
-			throw new ArgumentOutOfRangeException(nameof(secondsDelay));
-		}
+		ArgumentOutOfRangeException.ThrowIfZero(secondsDelay);
 
 		while (!cancellationToken.IsCancellationRequested) {
 			try {
@@ -274,7 +279,7 @@ internal static class Logging {
 				return;
 			}
 
-			Console.Beep();
+			Console.Write('\a');
 		}
 	}
 
@@ -286,9 +291,17 @@ internal static class Logging {
 
 			Utilities.InBackground(() => BeepUntilCanceled(token));
 
+			if (OperatingSystem.IsWindows()) {
+				OS.WindowsStartFlashingConsoleWindow();
+			}
+
 			return Console.ReadLine();
 		} finally {
 			cts.Cancel();
+
+			if (OperatingSystem.IsWindows()) {
+				OS.WindowsStopFlashingConsoleWindow();
+			}
 		}
 	}
 
@@ -300,11 +313,28 @@ internal static class Logging {
 
 			Utilities.InBackground(() => BeepUntilCanceled(token));
 
+			if (OperatingSystem.IsWindows()) {
+				OS.WindowsStartFlashingConsoleWindow();
+			}
+
 			StringBuilder result = new();
 
-			ConsoleKeyInfo keyInfo;
+			while (true) {
+				ConsoleKeyInfo keyInfo = Console.ReadKey(true);
 
-			while ((keyInfo = Console.ReadKey(true)).Key != ConsoleKey.Enter) {
+				if (keyInfo.KeyChar == '\u0004') {
+					// Linux terminal closing STDIN, we're done here
+					return result.ToString();
+				}
+
+				if (keyInfo.Key == ConsoleKey.Enter) {
+					// User finishing input, as expected
+					Console.WriteLine();
+
+					return result.ToString();
+				}
+
+				// User continues input
 				if (!char.IsControl(keyInfo.KeyChar)) {
 					result.Append(keyInfo.KeyChar);
 					Console.Write(mask);
@@ -320,18 +350,18 @@ internal static class Logging {
 					}
 				}
 			}
-
-			Console.WriteLine();
-
-			return result.ToString();
 		} finally {
 			cts.Cancel();
+
+			if (OperatingSystem.IsWindows()) {
+				OS.WindowsStopFlashingConsoleWindow();
+			}
 		}
 	}
 
 	private static async Task HandleConsoleInteractively() {
-		while (!Program.ShutdownSequenceInitialized) {
-			try {
+		try {
+			while (!Program.ShutdownSequenceInitialized) {
 				if (IsWaitingForUserInput || !Console.KeyAvailable) {
 					await Task.Delay(ConsoleResponsivenessDelay).ConfigureAwait(false);
 
@@ -343,7 +373,13 @@ internal static class Logging {
 				try {
 					ConsoleKeyInfo keyInfo = Console.ReadKey(true);
 
+					if (keyInfo.KeyChar == '\u0004') {
+						// Linux terminal closing STDIN, we're done here
+						return;
+					}
+
 					if (keyInfo.Key != ConsoleKey.C) {
+						// Console input other than 'c', ignored
 						continue;
 					}
 
@@ -359,12 +395,8 @@ internal static class Logging {
 
 						string? commandPrefix = ASF.GlobalConfig != null ? ASF.GlobalConfig.CommandPrefix : GlobalConfig.DefaultCommandPrefix;
 
-						// ReSharper disable RedundantSuppressNullableWarningExpression - required for .NET Framework
-						if (!string.IsNullOrEmpty(commandPrefix) && command!.StartsWith(commandPrefix!, StringComparison.Ordinal)) {
-							// ReSharper restore RedundantSuppressNullableWarningExpression - required for .NET Framework
-
-							// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-							if (command.Length == commandPrefix!.Length) {
+						if (!string.IsNullOrEmpty(commandPrefix) && command.StartsWith(commandPrefix, StringComparison.Ordinal)) {
+							if (command.Length == commandPrefix.Length) {
 								// If the message starts with command prefix and is of the same length as command prefix, then it's just empty command trigger, useless
 								continue;
 							}
@@ -372,7 +404,7 @@ internal static class Logging {
 							command = command[commandPrefix.Length..];
 						}
 
-						Bot? targetBot = Bot.Bots?.OrderBy(static bot => bot.Key, Bot.BotsComparer).Select(static bot => bot.Value).FirstOrDefault();
+						Bot? targetBot = Bot.GetDefaultBot();
 
 						if (targetBot == null) {
 							Console.WriteLine($@"<< {Strings.ErrorNoBotsDefined}");
@@ -382,8 +414,7 @@ internal static class Logging {
 
 						Console.WriteLine($@"<> {Strings.Executing}");
 
-						// ReSharper disable once RedundantSuppressNullableWarningExpression - required for .NET Framework
-						string? response = await targetBot.Commands.Response(EAccess.Owner, command!).ConfigureAwait(false);
+						string? response = await targetBot.Commands.Response(EAccess.Owner, command).ConfigureAwait(false);
 
 						if (string.IsNullOrEmpty(response)) {
 							ASF.ArchiLogger.LogNullError(response);
@@ -399,11 +430,9 @@ internal static class Logging {
 				} finally {
 					ConsoleSemaphore.Release();
 				}
-			} catch (Exception e) {
-				ASF.ArchiLogger.LogGenericException(e);
-
-				return;
 			}
+		} catch (Exception e) {
+			ASF.ArchiLogger.LogGenericException(e);
 		}
 	}
 
@@ -427,9 +456,9 @@ internal static class Logging {
 
 		if (!Debugging.IsUserDebugging) {
 			// Silence default ASP.NET logging
-			config.LoggingRules.Add(new LoggingRule("Microsoft*", target) { FinalMinLevel = LogLevel.Warn });
-			config.LoggingRules.Add(new LoggingRule("Microsoft.Hosting.Lifetime*", target) { FinalMinLevel = LogLevel.Info });
-			config.LoggingRules.Add(new LoggingRule("System*", target) { FinalMinLevel = LogLevel.Warn });
+			config.LoggingRules.Add(new LoggingRule("Microsoft.*", target) { FinalMinLevel = LogLevel.Warn });
+			config.LoggingRules.Add(new LoggingRule("Microsoft.Hosting.Lifetime", target) { FinalMinLevel = LogLevel.Info });
+			config.LoggingRules.Add(new LoggingRule("System.*", target) { FinalMinLevel = LogLevel.Warn });
 		}
 
 		config.LoggingRules.Add(new LoggingRule("*", LogLevel.Debug, target));

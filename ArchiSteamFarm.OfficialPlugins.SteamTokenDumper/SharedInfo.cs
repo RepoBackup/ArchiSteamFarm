@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +31,7 @@ internal static class SharedInfo {
 	internal const byte MaximumMinutesBeforeFirstUpload = 60; // Must be greater or equal to MinimumMinutesBeforeFirstUpload
 	internal const byte MinimumMinutesBeforeFirstUpload = 10; // Must be less or equal to MaximumMinutesBeforeFirstUpload
 	internal const byte MinimumMinutesBetweenUploads = 5; // Rate limiting for the server
-	internal const string ServerURL = "https://asf-token-dumper.xpaw.me";
+	internal const string ServerURL = "https://tokendumper-asf.steamdb.info";
 	internal const string Token = "STEAM_TOKEN_DUMPER_TOKEN"; // This is filled automatically during our CI build with API key provided by xPaw for ASF project
 
 	internal static bool HasValidToken => Token.Length == 128;

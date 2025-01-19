@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +22,9 @@
 // limitations under the License.
 
 using System;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Web;
 using ArchiSteamFarm.Web.Responses;
@@ -30,15 +35,15 @@ namespace ArchiSteamFarm.CustomPlugins.ExamplePlugin;
 // You've always wanted from your ASF to post cats, right? Now is your chance!
 // P.S. The code is almost 1:1 copy from the one I use in ArchiBot, you can thank me later
 internal static class CatAPI {
-	private const string URL = "https://aws.random.cat";
+	private const string URL = "https://api.thecatapi.com";
 
-	internal static async Task<Uri?> GetRandomCatURL(WebBrowser webBrowser) {
+	internal static async Task<Uri?> GetRandomCatURL(WebBrowser webBrowser, CancellationToken cancellationToken = default) {
 		ArgumentNullException.ThrowIfNull(webBrowser);
 
-		Uri request = new($"{URL}/meow");
+		Uri request = new($"{URL}/v1/images/search");
 
-		ObjectResponse<MeowResponse>? response = await webBrowser.UrlGetToJsonObject<MeowResponse>(request).ConfigureAwait(false);
+		ObjectResponse<ImmutableList<MeowResponse>>? response = await webBrowser.UrlGetToJsonObject<ImmutableList<MeowResponse>>(request, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-		return response?.Content?.URL;
+		return response?.Content?.FirstOrDefault()?.URL;
 	}
 }

@@ -12,6 +12,8 @@ body:
           required: true
         - label: I also read **[Setting-up](https://github.com/JustArchiNET/ArchiSteamFarm/wiki/Setting-up)** and **[FAQ](https://github.com/JustArchiNET/ArchiSteamFarm/wiki/FAQ)**, I don't need **[help](https://github.com/JustArchiNET/ArchiSteamFarm/blob/main/.github/SUPPORT.md)**, this is a bug report
           required: true
+        - label: This is not a **[duplicate](https://github.com/JustArchiNET/ArchiSteamFarm/issues?q=is%3Aissue)** of an existing issue
+          required: true
         - label: I don't own more than **[10 accounts in total](https://github.com/JustArchiNET/ArchiSteamFarm/wiki/FAQ#how-many-bots-can-i-run-with-asf)**
           required: true
         - label: I'm not using **[custom plugins](https://github.com/JustArchiNET/ArchiSteamFarm/wiki/Plugins)**
@@ -42,12 +44,12 @@ body:
         - docker-linux/arm/v7
         - docker-linux/arm64
         - generic (with latest .NET runtime)
-        - generic-netf (with latest Mono runtime)
         - linux-arm
         - linux-arm64
         - linux-x64
         - osx-arm64
         - osx-x64
+        - win-arm64
         - win-x64
     validations:
       required: true
@@ -147,6 +149,7 @@ body:
 
         Ensure that your config has redacted (but NOT removed) potentially-sensitive properties, such as:
         - IPCPassword (recommended)
+        - LicenseID (mandatory)
         - SteamOwnerID (optionally)
         - WebProxy (optionally, if exposing private details)
         - WebProxyPassword (optionally, if exposing private details)

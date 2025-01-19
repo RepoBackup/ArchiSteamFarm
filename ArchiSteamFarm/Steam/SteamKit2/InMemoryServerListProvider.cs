@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,31 +24,40 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Collections;
-using Newtonsoft.Json;
+using ArchiSteamFarm.Helpers.Json;
+using JetBrains.Annotations;
 using SteamKit2.Discovery;
 
 namespace ArchiSteamFarm.Steam.SteamKit2;
 
 internal sealed class InMemoryServerListProvider : IServerListProvider {
-	[JsonProperty(Required = Required.DisallowNull)]
-	private readonly ConcurrentHashSet<ServerRecordEndPoint> ServerRecords = new();
+	[JsonInclude]
+	public DateTime LastServerListRefresh { get; private set; }
+
+	[JsonDisallowNull]
+	[JsonInclude]
+	private ConcurrentList<ServerRecordEndPoint> ServerRecords { get; init; } = [];
 
 	public Task<IEnumerable<ServerRecord>> FetchServerListAsync() => Task.FromResult(ServerRecords.Where(static server => !string.IsNullOrEmpty(server.Host) && server is { Port: > 0, ProtocolTypes: > 0 }).Select(static server => ServerRecord.CreateServer(server.Host, server.Port, server.ProtocolTypes)));
 
 	public Task UpdateServerListAsync(IEnumerable<ServerRecord> endpoints) {
 		ArgumentNullException.ThrowIfNull(endpoints);
 
-		HashSet<ServerRecordEndPoint> newServerRecords = endpoints.Select(static endpoint => new ServerRecordEndPoint(endpoint.GetHost(), (ushort) endpoint.GetPort(), endpoint.ProtocolTypes)).ToHashSet();
+		LastServerListRefresh = DateTime.UtcNow;
 
-		if (ServerRecords.ReplaceIfNeededWith(newServerRecords)) {
-			ServerListUpdated?.Invoke(this, EventArgs.Empty);
-		}
+		IEnumerable<ServerRecordEndPoint> serverRecords = endpoints.Select(static endpoint => new ServerRecordEndPoint(endpoint.GetHost(), (ushort) endpoint.GetPort(), endpoint.ProtocolTypes));
+
+		ServerRecords.ReplaceWith(serverRecords);
+
+		ServerListUpdated?.Invoke(this, EventArgs.Empty);
 
 		return Task.CompletedTask;
 	}
 
+	[UsedImplicitly]
 	public bool ShouldSerializeServerRecords() => ServerRecords.Count > 0;
 
 	internal event EventHandler? ServerListUpdated;

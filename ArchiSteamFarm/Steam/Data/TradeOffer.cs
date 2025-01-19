@@ -1,10 +1,12 @@
+// ----------------------------------------------------------------------------------------------
 //     _                _      _  ____   _                           _____
 //    / \    _ __  ___ | |__  (_)/ ___| | |_  ___   __ _  _ __ ___  |  ___|__ _  _ __  _ __ ___
 //   / _ \  | '__|/ __|| '_ \ | |\___ \ | __|/ _ \ / _` || '_ ` _ \ | |_  / _` || '__|| '_ ` _ \
 //  / ___ \ | |  | (__ | | | || | ___) || |_|  __/| (_| || | | | | ||  _|| (_| || |   | | | | | |
 // /_/   \_\|_|   \___||_| |_||_||____/  \__|\___| \__,_||_| |_| |_||_|   \__,_||_|   |_| |_| |_|
+// ----------------------------------------------------------------------------------------------
 // |
-// Copyright 2015-2023 Łukasz "JustArchi" Domeradzki
+// Copyright 2015-2025 Łukasz "JustArchi" Domeradzki
 // Contact: JustArchi@JustArchi.net
 // |
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,14 +23,17 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json.Serialization;
+using ArchiSteamFarm.Helpers.Json;
 using JetBrains.Annotations;
 using SteamKit2;
 
 namespace ArchiSteamFarm.Steam.Data;
 
 // REF: https://developer.valvesoftware.com/wiki/Steam_Web_API/IEconService#CEcon_TradeOffer
+[SuppressMessage("ReSharper", "ClassCannotBeInstantiated")]
 public sealed class TradeOffer {
 	[PublicAPI]
 	public IReadOnlyCollection<Asset> ItemsToGiveReadOnly => ItemsToGive;
@@ -36,43 +41,44 @@ public sealed class TradeOffer {
 	[PublicAPI]
 	public IReadOnlyCollection<Asset> ItemsToReceiveReadOnly => ItemsToReceive;
 
-	internal readonly HashSet<Asset> ItemsToGive = new();
-	internal readonly HashSet<Asset> ItemsToReceive = new();
-
 	[PublicAPI]
 	public ulong OtherSteamID64 { get; private set; }
 
+	[JsonInclude]
+	[JsonPropertyName("trade_offer_state")]
 	[PublicAPI]
 	public ETradeOfferState State { get; private set; }
 
+	[JsonInclude]
+	[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString | JsonNumberHandling.WriteAsString)]
+	[JsonPropertyName("tradeofferid")]
 	[PublicAPI]
 	public ulong TradeOfferID { get; private set; }
 
-	// Constructed from trades being received
-	internal TradeOffer(ulong tradeOfferID, uint otherSteamID3, ETradeOfferState state) {
-		if (tradeOfferID == 0) {
-			throw new ArgumentOutOfRangeException(nameof(tradeOfferID));
-		}
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonPropertyName("items_to_give")]
+	internal HashSet<Asset> ItemsToGive { get; private init; } = [];
 
-		if (otherSteamID3 == 0) {
-			throw new ArgumentOutOfRangeException(nameof(otherSteamID3));
-		}
+	[JsonDisallowNull]
+	[JsonInclude]
+	[JsonPropertyName("items_to_receive")]
+	internal HashSet<Asset> ItemsToReceive { get; private init; } = [];
 
-		if (!Enum.IsDefined(state)) {
-			throw new InvalidEnumArgumentException(nameof(state), (int) state, typeof(ETradeOfferState));
-		}
+	[JsonInclude]
+	[JsonPropertyName("accountid_other")]
+	[JsonRequired]
+	private uint OtherSteamID3 { init => OtherSteamID64 = new SteamID(value, EUniverse.Public, EAccountType.Individual); }
 
-		TradeOfferID = tradeOfferID;
-		OtherSteamID64 = new SteamID(otherSteamID3, EUniverse.Public, EAccountType.Individual);
-		State = state;
-	}
+	[JsonConstructor]
+	private TradeOffer() { }
 
 	[PublicAPI]
-	public bool IsValidSteamItemsRequest(IReadOnlyCollection<Asset.EType> acceptedTypes) {
+	public bool IsValidSteamItemsRequest(IReadOnlyCollection<EAssetType> acceptedTypes) {
 		if ((acceptedTypes == null) || (acceptedTypes.Count == 0)) {
 			throw new ArgumentNullException(nameof(acceptedTypes));
 		}
 
-		return ItemsToGive.All(item => item is { AppID: Asset.SteamAppID, ContextID: Asset.SteamCommunityContextID } && acceptedTypes.Contains(item.Type));
+		return ItemsToGive.All(item => item is { AppID: Asset.SteamAppID, ContextID: Asset.SteamCommunityContextID, AssetID: > 0, Amount: > 0, ClassID: > 0, RealAppID: > 0 and not Asset.SteamAppID, Type: > EAssetType.Unknown, Rarity: > EAssetRarity.Unknown } && acceptedTypes.Contains(item.Type));
 	}
 }

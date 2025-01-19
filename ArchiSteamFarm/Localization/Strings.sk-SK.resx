@@ -53,13 +53,11 @@
 		<value>2.0</value>
 	</resheader>
 	<resheader name="reader">
-		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<resheader name="writer">
-		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral,
-			PublicKeyToken=b77a5c561934e089
+		<value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089
 		</value>
 	</resheader>
 	<data name="AcceptingTrade" xml:space="preserve">
@@ -90,7 +88,8 @@ StackTrace:
 		<comment>{0} will be replaced by function name, {1} will be replaced by exception message, {2} will be replaced by entire stack trace. Please note that this string should include newlines for formatting.</comment>
 	</data>
 	<data name="ErrorExitingWithNonZeroErrorCode" xml:space="preserve">
-		<value>Ukončenie s nenulovým chybovým kódom!</value>
+		<value>Ukončenie s {0} chybovým kódom!</value>
+		<comment>{0} will be replaced by error code (number)</comment>
 	</data>
 	<data name="ErrorFailingRequest" xml:space="preserve">
 		<value>Zlyhanie požiadavky: {0}</value>
@@ -190,11 +189,18 @@ StackTrace:
 		<value>Lokálna verzia: {0} | Vzdialená verzia: {1}</value>
 		<comment>{0} will be replaced by current version, {1} will be replaced by remote version</comment>
 	</data>
+	<data name="UserInputDeviceConfirmation" xml:space="preserve">
+		<value>Prosím skontrolujte svoju mobilnú aplikáciu Steam, mali by ste dostať oznámenie o schválení prihlásenia. Napíšte Y pokiaľ ste dostali a potvrdili oznámenie, N pokiaľ miesto toho chcete vypísať prihlasovací kód: </value>
+		<comment>Please note that this translation should end with space</comment>
+	</data>
 	<data name="UserInputSteam2FA" xml:space="preserve">
 		<value>Zadaj autentifikačný 2FA kód z aplikácie Steam: </value>
 		<comment>Please note that this translation should end with space</comment>
 	</data>
-	
+	<data name="UserInputSteamGuard" xml:space="preserve">
+		<value>Prosím, zadajte overovací kód SteamGuard, ktorý bol poslaný na váš e-mail: </value>
+		<comment>Please note that this translation should end with space</comment>
+	</data>
 	<data name="UserInputSteamLogin" xml:space="preserve">
 		<value>Zadaj Steam login: </value>
 		<comment>Please note that this translation should end with space</comment>
@@ -481,9 +487,6 @@ StackTrace:
 	<data name="BotHeartBeatFailed" xml:space="preserve">
 		<value>Odpojenie klienta zlyhalo. Inštancia bota sa ruší!</value>
 	</data>
-	<data name="BotSteamDirectoryInitializationFailed" xml:space="preserve">
-		<value>Inicializácia SteamDirectory nie je možná: pripojenie k sieti Steam môže trvať dlhšie ako zvyčajne!</value>
-	</data>
 	<data name="BotStopping" xml:space="preserve">
 		<value>Zastavovanie...</value>
 	</data>
@@ -547,14 +550,6 @@ StackTrace:
 		<value>Aktuálne využitie pamäte: {0} MB.
 Doba prevádzky procesu: {1}</value>
 		<comment>{0} will be replaced by number (in megabytes) of memory being used, {1} will be replaced by translated TimeSpan string (such as "25 minutes"). Please note that this string should include newlines for formatting.</comment>
-	</data>
-	<data name="ClearingDiscoveryQueue" xml:space="preserve">
-		<value>Prechádzanie {0}. fronty doporučenia...</value>
-		<comment>{0} will be replaced by queue number</comment>
-	</data>
-	<data name="DoneClearingDiscoveryQueue" xml:space="preserve">
-		<value>Fronta doporučenia #{0} dokončená.</value>
-		<comment>{0} will be replaced by queue number</comment>
 	</data>
 	<data name="BotOwnsOverviewPerGame" xml:space="preserve">
 		<value>{0} z {1} botov už vlastní hru {2}.</value>
@@ -685,20 +680,87 @@ Interaktívna konzola je teraz aktívna, napíšte "c" pre vstup do príkazovéh
 		<value>{0} konfiguračný súbor bude prevedený na najnovšiu syntax...</value>
 		<comment>{0} will be replaced with the relative path to the affected config file</comment>
 	</data>
+	<data name="WarningTooShortCryptKey" xml:space="preserve">
+		<value>Váš šifrovací kľuč je príliš krátky. Doporučujeme použiť ten, ktorý je aspoň {0} bajtu (znakov) dlhý.</value>
+		<comment>{0} will be replaced by the number of bytes (characters) recommended</comment>
+	</data>
+	
+	<data name="WarningDefaultCryptKeyUsedForEncryption" xml:space="preserve">
+		<value>Používate {0} nastavenie vlastnosti {1}, ale neposkytujete vlastný --cryptkey. To celkovo ruší ochranu, pretože ASF je nútený použiť svoj vlastný (známy) kľuč. Pre využitie bezpečnostného prínosu ponúkaného týmto nastavením, by ste mali poskytnúť vlastní --cryptkey.</value>
+		<comment>{0} will be replaced by the name of a particular setting (e.g. "AES"), {1} will be replaced by the name of the property (e.g. "SteamPassword")</comment>
+	</data>
+	<data name="WarningRunningAsRoot" xml:space="preserve">
+		<value>Snažíte se spustiť ASF ako administrátor (root). To spôsobuje značné bezpečnostné riziko pre váš počítač, naviac ASF nevyžaduje administrátorské oprávnenie pre fungovanie, preto doporučujeme spustenie aplikácie pod klasickým užívateľom.</value>
+	</data>
+	<data name="WarningRunningInUnsupportedEnvironment" xml:space="preserve">
+		<value>Používate ASF v nepodporovanom prostredí s použitím parametra --ignore-unsupported-environment. Vezmite prosím na vedomie, že neposkytujeme žiadnu podporu pre tento scenár a robíte to na vlastní riziko. Boli ste varovaní.</value>
+	</data>
+	<data name="FetchingChecksumFromRemoteServer" xml:space="preserve">
+		<value>Načítanie kontrolného súčtu zo vzdialeného serveru...</value>
+	</data>
+	<data name="VerifyingChecksumWithRemoteServer" xml:space="preserve">
+		<value>Overovanie kontrolného súčtu stiahnutých binárnych súborov voči vzdialenému serveru...</value>
+	</data>
+	<data name="ChecksumMissing" xml:space="preserve">
+		<value>Vzdialený server nepozná verziu na ktorú se snažíte aktualizovať. Táto situácia nastáva, pokiaľ verzia bola vydaná nedávno - aktualizácia nebude z bezpečnostných dôvodov pokračovať.</value>
+	</data>
+	
+	<data name="ChecksumWrong" xml:space="preserve">
+		<value>Vzdialený server odpovedal s iným kontrolným súčtom, čo môže naznačovať chybu pri sťahovaní alebo útok MITM, proces aktualizácie preto nebude pokračovať!</value>
+	</data>
+	<data name="PatchingFiles" xml:space="preserve">
+		<value>Aktualizácia ASF súborov...</value>
+	</data>
+	<data name="UserInputCryptkey" xml:space="preserve">
+		<value>Zadajte, prosím, svoj šifrovací kľuč: </value>
+		<comment>Please note that this translation should end with space</comment>
+	</data>
+	<data name="ErrorIPNotBanned" xml:space="preserve">
+		<value>IP adresa {0} nieje zablokovaná!</value>
+		<comment>{0} will be replaced by an IP address which was requested to be unbanned from using IPC</comment>
+	</data>
+	<data name="WarningNoLicense" xml:space="preserve">
+		<value>Pokúsili ste se použiť platenú funkciu {0}, ale nemáte platné ID licencie nastavené v globálnej konfigurácii ASF. Skontrolujte prosím svoju konfiguráciu, pretože funkcia nebude fungovať bez ďalších podrobností.</value>
+		<comment>{0} will be replaced by feature name (e.g. MatchActively)</comment>
+	</data>
+	<data name="WarningRegionRestrictedPackage" xml:space="preserve">
+		<value>ASF nemôže spustiť aplikáciu {0}, pretože má regionálne obmedzenie pre krajinu {1}, ktoré trvá do {2}.</value>
+		<comment>{0} will be replaced by app ID (number), {1} will be replaced by short country code (string, such as "PL"), {2} will be replaced by human-readable date (string).</comment>
+	</data>
 	
 	
 	
 	
+	<data name="PluginUpdatesChecking" xml:space="preserve">
+		<value>Kontrolujem aktualizácie pluginov...</value>
+	</data>
+	<data name="PluginUpdateChecking" xml:space="preserve">
+		<value>Kontrolujem aktualizácie pre {0} plugin...</value>
+		<comment>{0} will be replaced by plugin name (string).</comment>
+	</data>
+	<data name="PluginUpdateNotFound" xml:space="preserve">
+		<value>Žiadne dostupné aktualizácie pre {0} plugin: {1} ≥ {2}.</value>
+		<comment>{0} will be replaced by plugin name (string), {1} will be replaced by current plugin's version, {2} will be replaced by remote plugin's version.</comment>
+	</data>
+	
+	<data name="PluginUpdateFound" xml:space="preserve">
+		<value>Našla sa aktualizácia pre {0} plugin z verzie {1} na {2}...</value>
+		<comment>{0} will be replaced by plugin name (string), {1} will be replaced by current plugin's version, {2} will be replaced by remote plugin's version.</comment>
+	</data>
 	
 	
-	
-	
-	
-	
-	
-	
-	
-	
+	<data name="PluginUpdateInProgress" xml:space="preserve">
+		<value>Aktualizujem {0} plugin...</value>
+		<comment>{0} will be replaced by plugin name (string).</comment>
+	</data>
+	<data name="PluginUpdateFinished" xml:space="preserve">
+		<value>Aktualizovanie {0} pluginu bolo úspešné, zmeny sa načítajú pri ďalšom spustení ASF.</value>
+		<comment>{0} will be replaced by plugin name (string).</comment>
+	</data>
+	<data name="PluginUpdateEnabled" xml:space="preserve">
+		<value>{0}/{1} plugin bol zaregistrovaný a automatické aktualizácie boli aktivované.</value>
+		<comment>{0} will be replaced by plugin name (string), {1} will be replaced by plugin assembly name (string).</comment>
+	</data>
 	
 	
 </root>
