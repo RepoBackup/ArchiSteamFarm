@@ -52,7 +52,7 @@ namespace ArchiSteamFarm.Steam.Integration;
 
 public sealed class ArchiWebHandler : IDisposable {
 	// Steam network (ArchiHandler) works unstable with more items than this (throwing upon description details), while Steam web (ArchiWebHandler) silently limits to this value maximum
-	internal const ushort MaxItemsInSingleInventoryRequest = 5000;
+	internal const ushort MaxItemsInSingleInventoryRequest = 2500;
 
 	private const string EconService = "IEconService";
 	private const byte MaxTradeOfferMessageLength = 128;
@@ -91,7 +91,7 @@ public sealed class ArchiWebHandler : IDisposable {
 		ArgumentNullException.ThrowIfNull(bot);
 
 		Bot = bot;
-		WebBrowser = new WebBrowser(bot.ArchiLogger, ASF.GlobalConfig?.WebProxy);
+		WebBrowser = new WebBrowser(bot.ArchiLogger, bot.BotConfig.WebProxy ?? ASF.GlobalConfig?.WebProxy);
 	}
 
 	public void Dispose() {
@@ -234,9 +234,10 @@ public sealed class ArchiWebHandler : IDisposable {
 	///     This method should be used exclusively for foreign inventories (other users), but in special circumstances it can be used for fetching bot's own inventory as well.
 	/// </remarks>
 	[PublicAPI]
-	public async IAsyncEnumerable<Asset> GetInventoryAsync(ulong steamID = 0, uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, string? language = null) {
+	public async IAsyncEnumerable<Asset> GetInventoryAsync(ulong steamID = 0, uint appID = Asset.SteamAppID, ulong contextID = Asset.SteamCommunityContextID, ushort itemsCountPerRequest = MaxItemsInSingleInventoryRequest, string? language = null) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentOutOfRangeException.ThrowIfZero(contextID);
+		ArgumentOutOfRangeException.ThrowIfZero(itemsCountPerRequest);
 
 		if (steamID == 0) {
 			if (!Initialized) {
@@ -274,7 +275,7 @@ public sealed class ArchiWebHandler : IDisposable {
 		int rateLimitingDelay = (ASF.GlobalConfig?.InventoryLimiterDelay ?? GlobalConfig.DefaultInventoryLimiterDelay) * 1000;
 
 		while (true) {
-			Uri request = new(SteamCommunityURL, $"/inventory/{steamID}/{appID}/{contextID}?l={language}&count={MaxItemsInSingleInventoryRequest}{(startAssetID > 0 ? $"&start_assetid={startAssetID}" : "")}");
+			Uri request = new(SteamCommunityURL, $"/inventory/{steamID}/{appID}/{contextID}?l={language}&count={itemsCountPerRequest}{(startAssetID > 0 ? $"&start_assetid={startAssetID}" : "")}");
 
 			await ASF.InventorySemaphore.WaitAsync().ConfigureAwait(false);
 
@@ -491,11 +492,34 @@ public sealed class ArchiWebHandler : IDisposable {
 
 		string queryString = string.Join('&', arguments.Select(static argument => $"{argument.Key}={HttpUtility.UrlEncode(argument.Value.ToString())}"));
 
-		Uri request = new(WebAPI.DefaultBaseAddress, $"/{EconService}/GetTradeOffers/v1?{queryString}");
+		// This endpoint is notorious for giving false 429 errors, add workaround for that case
+		Uri request = new(Bot.SteamConfiguration.WebAPIBaseAddress, $"/{EconService}/GetTradeOffers/v1?{queryString}");
 
-		TradeOffersResponse? response = (await WebLimitRequest(WebAPI.DefaultBaseAddress, async () => await WebBrowser.UrlGetToJsonObject<APIWrappedResponse<TradeOffersResponse>>(request).ConfigureAwait(false)).ConfigureAwait(false))?.Content?.Response;
+		TradeOffersResponse? tradeOffersResponse = null;
 
-		if (response == null) {
+		for (byte i = 0; (i < WebBrowser.MaxTries) && (tradeOffersResponse == null); i++) {
+			if (i > 0) {
+				await Task.Delay(i * 1000).ConfigureAwait(false);
+			}
+
+			ObjectResponse<APIWrappedResponse<TradeOffersResponse>>? response = await WebLimitRequest(Bot.SteamConfiguration.WebAPIBaseAddress, async () => await WebBrowser.UrlGetToJsonObject<APIWrappedResponse<TradeOffersResponse>>(request, requestOptions: WebBrowser.ERequestOptions.ReturnClientErrors | WebBrowser.ERequestOptions.AllowInvalidBodyOnErrors).ConfigureAwait(false)).ConfigureAwait(false);
+
+			if (response == null) {
+				continue;
+			}
+
+			if (response.StatusCode == HttpStatusCode.TooManyRequests) {
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatWarningWorkaroundTriggered($"{nameof(GetTradeOffers)}/{response.StatusCode}"));
+
+				continue;
+			}
+
+			if (response.StatusCode.IsSuccessCode()) {
+				tradeOffersResponse = response.Content?.Response;
+			}
+		}
+
+		if (tradeOffersResponse == null) {
 			Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
 
 			return null;
@@ -504,23 +528,23 @@ public sealed class ArchiWebHandler : IDisposable {
 		IEnumerable<TradeOffer> trades = [];
 
 		if (receivedOffers.GetValueOrDefault(true)) {
-			trades = trades.Concat(response.TradeOffersReceived);
+			trades = trades.Concat(tradeOffersResponse.TradeOffersReceived);
 		}
 
 		if (sentOffers.GetValueOrDefault(true)) {
-			trades = trades.Concat(response.TradeOffersSent);
+			trades = trades.Concat(tradeOffersResponse.TradeOffersSent);
 		}
 
 		HashSet<TradeOffer> result = trades.Where(tradeOffer => !activeOffers.HasValue || ((!activeOffers.Value || (tradeOffer.State == ETradeOfferState.Active)) && (activeOffers.Value || (tradeOffer.State != ETradeOfferState.Active)))).ToHashSet();
 
-		if ((result.Count == 0) || (response.Descriptions.Count == 0)) {
+		if ((result.Count == 0) || (tradeOffersResponse.Descriptions.Count == 0)) {
 			return result;
 		}
 
 		// Due to a possibility of duplicate descriptions, we can't simply call ToDictionary() here
 		Dictionary<(uint AppID, ulong ClassID, ulong InstanceID), InventoryDescription> descriptions = new();
 
-		foreach (InventoryDescription description in response.Descriptions) {
+		foreach (InventoryDescription description in tradeOffersResponse.Descriptions) {
 			if (description.AppID == 0) {
 				Bot.ArchiLogger.LogNullError(nameof(description.AppID));
 
@@ -703,7 +727,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -722,7 +746,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -743,7 +767,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return null;
 		}
@@ -754,7 +778,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -785,7 +809,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -804,7 +828,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -825,7 +849,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return null;
 		}
@@ -836,7 +860,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -867,7 +891,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -886,7 +910,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -907,7 +931,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return false;
 		}
@@ -918,7 +942,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -954,7 +978,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -973,7 +997,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1017,7 +1041,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return null;
 		}
@@ -1028,7 +1052,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1064,7 +1088,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1083,7 +1107,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1127,7 +1151,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return null;
 		}
@@ -1138,7 +1162,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1174,7 +1198,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1193,7 +1217,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1240,7 +1264,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return null;
 		}
@@ -1251,7 +1275,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return null;
 			}
@@ -1287,7 +1311,7 @@ public sealed class ArchiWebHandler : IDisposable {
 				}
 
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -1306,7 +1330,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (!Initialized) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -1350,7 +1374,7 @@ public sealed class ArchiWebHandler : IDisposable {
 			}
 
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return false;
 		}
@@ -1361,7 +1385,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 			if (--maxTries == 0) {
 				Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+				Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 				return false;
 			}
@@ -1594,9 +1618,10 @@ public sealed class ArchiWebHandler : IDisposable {
 		return await UrlPostWithSession(request).ConfigureAwait(false);
 	}
 
-	internal HttpClient GenerateDisposableHttpClient() => WebBrowser.GenerateDisposableHttpClient();
-
 	internal async Task<HashSet<uint>?> GetAppList() {
+		const string endpoint = "GetAppList";
+		HttpMethod method = HttpMethod.Get;
+
 		using WebAPI.AsyncInterface steamAppsService = Bot.SteamConfiguration.GetAsyncWebAPIInterface(SteamAppsService);
 
 		steamAppsService.Timeout = WebBrowser.Timeout;
@@ -1608,12 +1633,16 @@ public sealed class ArchiWebHandler : IDisposable {
 				await Task.Delay(WebLimiterDelay).ConfigureAwait(false);
 			}
 
+			if (Debugging.IsUserDebugging) {
+				Bot.ArchiLogger.LogGenericDebug($"{method} {Bot.SteamConfiguration.WebAPIBaseAddress}{SteamAppsService}/{endpoint}");
+			}
+
 			try {
 				response = await WebLimitRequest(
-					WebAPI.DefaultBaseAddress,
+					Bot.SteamConfiguration.WebAPIBaseAddress,
 
 					// ReSharper disable once AccessToDisposedClosure
-					async () => await steamAppsService.CallAsync(HttpMethod.Get, "GetAppList", 2).ConfigureAwait(false)
+					async () => await steamAppsService.CallAsync(method, endpoint, 2).ConfigureAwait(false)
 				).ConfigureAwait(false);
 			} catch (TaskCanceledException e) {
 				Bot.ArchiLogger.LogGenericDebuggingException(e);
@@ -1703,6 +1732,9 @@ public sealed class ArchiWebHandler : IDisposable {
 			return null;
 		}
 
+		const string endpoint = "GetTradeHoldDurations";
+		HttpMethod method = HttpMethod.Get;
+
 		Dictionary<string, object?> arguments = new(!string.IsNullOrEmpty(tradeToken) ? 3 : 2, StringComparer.Ordinal) {
 			{ "access_token", accessToken },
 			{ "steamid_target", steamID }
@@ -1723,12 +1755,16 @@ public sealed class ArchiWebHandler : IDisposable {
 				await Task.Delay(WebLimiterDelay).ConfigureAwait(false);
 			}
 
+			if (Debugging.IsUserDebugging) {
+				Bot.ArchiLogger.LogGenericDebug($"{method} {Bot.SteamConfiguration.WebAPIBaseAddress}{EconService}/{endpoint}");
+			}
+
 			try {
 				response = await WebLimitRequest(
-					WebAPI.DefaultBaseAddress,
+					Bot.SteamConfiguration.WebAPIBaseAddress,
 
 					// ReSharper disable once AccessToDisposedClosure
-					async () => await econService.CallAsync(HttpMethod.Get, "GetTradeHoldDurations", args: arguments).ConfigureAwait(false)
+					async () => await econService.CallAsync(method, endpoint, args: arguments).ConfigureAwait(false)
 				).ConfigureAwait(false);
 			} catch (TaskCanceledException e) {
 				Bot.ArchiLogger.LogGenericDebuggingException(e);
@@ -2142,6 +2178,21 @@ public sealed class ArchiWebHandler : IDisposable {
 		return (EResult.OK, EPurchaseResultDetail.NoDetail, response.Content.BalanceText);
 	}
 
+	internal async Task<EResult> RemoveLicense(uint subID) {
+		ArgumentOutOfRangeException.ThrowIfZero(subID);
+
+		Uri request = new(SteamStoreURL, "/account/removelicense");
+
+		// Extra entry for sessionID
+		Dictionary<string, string> data = new(2, StringComparer.Ordinal) {
+			{ "packageid", subID.ToString(CultureInfo.InvariantCulture) }
+		};
+
+		ObjectResponse<ResultResponse>? response = await UrlPostToJsonObjectWithSession<ResultResponse>(request, data: data).ConfigureAwait(false);
+
+		return response?.Content?.Result ?? EResult.Timeout;
+	}
+
 	internal async Task<bool> UnpackBooster(uint appID, ulong itemID) {
 		ArgumentOutOfRangeException.ThrowIfZero(appID);
 		ArgumentOutOfRangeException.ThrowIfZero(itemID);
@@ -2305,7 +2356,10 @@ public sealed class ArchiWebHandler : IDisposable {
 
 		Bot.ArchiLogger.LogGenericInfo(Strings.UnlockingParentalAccount);
 
-		bool[] results = await Task.WhenAll(UnlockParentalAccountForService(SteamCommunityURL, parentalCode), UnlockParentalAccountForService(SteamStoreURL, parentalCode)).ConfigureAwait(false);
+		bool[] results = await Task.WhenAll(
+			UnlockParentalAccountForService(SteamCommunityURL, parentalCode),
+			UnlockParentalAccountForService(SteamStoreURL, parentalCode)
+		).ConfigureAwait(false);
 
 		if (results.Any(static result => !result)) {
 			Bot.ArchiLogger.LogGenericWarning(Strings.WarningFailed);
@@ -2326,7 +2380,7 @@ public sealed class ArchiWebHandler : IDisposable {
 
 		if (maxTries == 0) {
 			Bot.ArchiLogger.LogGenericWarning(Strings.FormatErrorRequestFailedTooManyTimes(WebBrowser.MaxTries));
-			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(request));
+			Bot.ArchiLogger.LogGenericDebug(Strings.FormatErrorFailingRequest(Debugging.IsUserDebugging ? request : request.GetLeftPart(UriPartial.Path)));
 
 			return false;
 		}

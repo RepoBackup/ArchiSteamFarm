@@ -153,6 +153,10 @@ public sealed class BotController : ArchiController {
 					request.BotConfig.SteamParentalCode = bot.BotConfig.SteamParentalCode;
 				}
 
+				if (!request.BotConfig.IsWebProxyPasswordSet && bot.BotConfig.IsWebProxyPasswordSet) {
+					request.BotConfig.WebProxyPassword = bot.BotConfig.WebProxyPassword;
+				}
+
 				if (bot.BotConfig.AdditionalProperties?.Count > 0) {
 					request.BotConfig.AdditionalProperties ??= new Dictionary<string, JsonElement>(bot.BotConfig.AdditionalProperties.Count, bot.BotConfig.AdditionalProperties.Comparer);
 
@@ -435,6 +439,35 @@ public sealed class BotController : ArchiController {
 		return Ok(new GenericResponse<IReadOnlyDictionary<string, IReadOnlyDictionary<string, CStore_RegisterCDKey_Response?>>>(result.Values.SelectMany(static responses => responses.Values).All(static value => value != null), result));
 	}
 
+	[EndpointSummary("Removes licenses on given bots")]
+	[HttpPost("{botNames:required}/RemoveLicense")]
+	[ProducesResponseType<GenericResponse<IReadOnlyDictionary<string, BotRemoveLicenseResponse>>>((int) HttpStatusCode.OK)]
+	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.BadRequest)]
+	public async Task<ActionResult<GenericResponse>> RemoveLicensePost(string botNames, [FromBody] BotRemoveLicenseRequest request) {
+		ArgumentException.ThrowIfNullOrEmpty(botNames);
+		ArgumentNullException.ThrowIfNull(request);
+
+		if ((request.Apps?.IsEmpty != false) && (request.Packages?.IsEmpty != false)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatErrorIsEmpty($"{nameof(request.Apps)} && {nameof(request.Packages)}")));
+		}
+
+		HashSet<Bot>? bots = Bot.GetBots(botNames);
+
+		if ((bots == null) || (bots.Count == 0)) {
+			return BadRequest(new GenericResponse(false, Strings.FormatBotNotFound(botNames)));
+		}
+
+		IList<BotRemoveLicenseResponse> results = await Utilities.InParallel(bots.Select(bot => RemoveLicense(bot, request))).ConfigureAwait(false);
+
+		Dictionary<string, BotRemoveLicenseResponse> result = new(bots.Count, Bot.BotsComparer);
+
+		foreach (Bot bot in bots) {
+			result[bot.BotName] = results[result.Count];
+		}
+
+		return Ok(new GenericResponse<IReadOnlyDictionary<string, BotRemoveLicenseResponse>>(result));
+	}
+
 	[EndpointSummary("Renames given bot along with all its related files")]
 	[HttpPost("{botName:required}/Rename")]
 	[ProducesResponseType<GenericResponse>((int) HttpStatusCode.OK)]
@@ -554,5 +587,43 @@ public sealed class BotController : ArchiController {
 		}
 
 		return new BotAddLicenseResponse(apps, packages);
+	}
+
+	private static async Task<BotRemoveLicenseResponse> RemoveLicense(Bot bot, BotRemoveLicenseRequest request) {
+		ArgumentNullException.ThrowIfNull(bot);
+		ArgumentNullException.ThrowIfNull(request);
+
+		Dictionary<uint, EResult>? apps = null;
+		Dictionary<uint, EResult>? packages = null;
+
+		if (request.Apps != null) {
+			apps = new Dictionary<uint, EResult>(request.Apps.Count);
+
+			foreach (uint appID in request.Apps) {
+				if (!bot.IsConnectedAndLoggedOn) {
+					apps[appID] = EResult.Timeout;
+
+					continue;
+				}
+
+				apps[appID] = await bot.Actions.RemoveLicenseApp(appID).ConfigureAwait(false);
+			}
+		}
+
+		if (request.Packages != null) {
+			packages = new Dictionary<uint, EResult>(request.Packages.Count);
+
+			foreach (uint subID in request.Packages) {
+				if (!bot.IsConnectedAndLoggedOn) {
+					packages[subID] = EResult.Timeout;
+
+					continue;
+				}
+
+				packages[subID] = await bot.Actions.RemoveLicensePackage(subID).ConfigureAwait(false);
+			}
+		}
+
+		return new BotRemoveLicenseResponse(apps, packages);
 	}
 }
