@@ -73,7 +73,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 	private const byte ExtraStorePackagesValidForDays = 7;
 	private const byte LoginCooldownInMinutes = 25; // Captcha disappears after around 20 minutes, so we make it 25
 	private const uint LoginID = 1242; // This must be the same for all ASF bots and all ASF processes
-	private const byte MaxLoginFailures = WebBrowser.MaxTries; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)course)
+	private const byte MaxLoginFailures = 3; // Max login failures in a row before we determine that our credentials are invalid (because Steam wrongly returns those, of course)
 	private const byte MinimumAccessTokenValidityMinutes = 5;
 	private const byte RedeemCooldownInHours = 1; // 1 hour since first redeem attempt, this is a limitation enforced by Steam
 	private const byte RegionRestrictionPlayableBlockMonths = 3;
@@ -334,7 +334,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 
 		SteamConfiguration = SteamConfiguration.Create(builder => {
 				builder.WithCellID(ASF.GlobalDatabase.CellID);
-				builder.WithHttpClientFactory(ArchiWebHandler.GenerateDisposableHttpClient);
+				builder.WithHttpClientFactory(_ => ArchiWebHandler.WebBrowser.GenerateDisposableHttpClient());
 				builder.WithProtocolTypes(ASF.GlobalConfig?.SteamProtocols ?? GlobalConfig.DefaultSteamProtocols);
 				builder.WithServerListProvider(ASF.GlobalDatabase.ServerListProvider);
 
@@ -2254,6 +2254,22 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				// Likely permanently wrong account credentials
 				LoginFailures = 0;
 
+				// Reset temporary login credentials, as user used wrong ones most likely, allow them to fix their mistake if they start the bot again
+				if (!BotConfig.IsSteamLoginSet) {
+					BotConfig.SteamLogin = null;
+					BotConfig.IsSteamLoginSet = false;
+				}
+
+				if (!BotConfig.IsSteamPasswordSet) {
+					BotConfig.SteamPassword = null;
+					BotConfig.IsSteamPasswordSet = false;
+				}
+
+				if (!BotConfig.IsSteamParentalCodeSet) {
+					BotConfig.SteamParentalCode = null;
+					BotConfig.IsSteamParentalCodeSet = false;
+				}
+
 				ArchiLogger.LogGenericError(Strings.FormatBotInvalidPasswordDuringLogin(MaxLoginFailures));
 
 				await Stop().ConfigureAwait(false);
@@ -2531,7 +2547,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			);
 		}
 
-		if (BotConfig.TradeCheckPeriod > 0) {
+		if ((BotConfig.TradeCheckPeriod > 0) && !BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing)) {
 			TradeCheckTimer = new Timer(
 				OnTradeCheckTimer,
 				null,
@@ -2783,6 +2799,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 				).ConfigureAwait(false);
 
 				pollResult = await authSession.PollingWaitForResultAsync(authCancellationTokenSource.Token).ConfigureAwait(false);
+			} catch (AsyncJobFailedException e) {
+				ArchiLogger.LogGenericWarningException(e);
+
+				await HandleLoginResult(EResult.Timeout, EResult.Timeout).ConfigureAwait(false);
+
+				ReconnectOnUserInitiated = true;
+				SteamClient.Disconnect();
+
+				return;
 			} catch (AuthenticationException e) {
 				ArchiLogger.LogGenericWarningException(e);
 
@@ -3073,11 +3098,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		// Under normal circumstances, timestamp must always be greater than 0, but Steam already proved that it's capable of going against the logic
-		if ((notification.Body.steamid_sender != SteamID) && (notification.Body.timestamp > 0)) {
-			if (ShouldAckChatMessage(notification.Body.steamid_sender)) {
-				Utilities.InBackground(() => ArchiHandler.AckChatMessage(notification.Body.chat_group_id, notification.Body.chat_id, notification.Body.timestamp));
+		if ((notification.Body.steamid_sender != SteamID) && ShouldAckChatMessage(notification.Body.steamid_sender)) {
+			uint timestamp = notification.Body.timestamp;
+
+			// Under normal circumstances, timestamp should always be greater than 0, but Steam already proved that it's capable of going against the logic
+			if (timestamp == 0) {
+				timestamp = (uint) Utilities.GetUnixTime();
 			}
+
+			Utilities.InBackground(() => ArchiHandler.AckChatMessage(notification.Body.chat_group_id, notification.Body.chat_id, timestamp));
 		}
 
 		string message;
@@ -3113,15 +3142,15 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 			return;
 		}
 
-		if ((EChatEntryType) notification.Body.chat_entry_type != EChatEntryType.ChatMsg) {
-			return;
-		}
+		if (!notification.Body.local_echo && ShouldAckChatMessage(notification.Body.steamid_friend)) {
+			uint timestamp = notification.Body.rtime32_server_timestamp;
 
-		// Under normal circumstances, timestamp must always be greater than 0, but Steam already proved that it's capable of going against the logic
-		if (notification.Body is { local_echo: false, rtime32_server_timestamp: > 0 }) {
-			if (ShouldAckChatMessage(notification.Body.steamid_friend)) {
-				Utilities.InBackground(() => ArchiHandler.AckMessage(notification.Body.steamid_friend, notification.Body.rtime32_server_timestamp));
+			// Under normal circumstances, timestamp should always be greater than 0, but Steam already proved that it's capable of going against the logic
+			if (timestamp == 0) {
+				timestamp = (uint) Utilities.GetUnixTime();
 			}
+
+			Utilities.InBackground(() => ArchiHandler.AckMessage(notification.Body.steamid_friend, timestamp));
 		}
 
 		string message;
@@ -3141,7 +3170,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 		// We'll explicitly ignore those messages when using offline mode, as it was done in the first version of Steam chat when no messages were broadcasted at all before signing in
 		// Handling messages will still work correctly in invisible mode, which is how it should work in the first place
 		// This goes in addition to usual logic that ignores irrelevant messages from being parsed further
-		if (notification.Body.local_echo || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
+		if (((EChatEntryType) notification.Body.chat_entry_type != EChatEntryType.ChatMsg) || notification.Body.local_echo || (BotConfig.OnlineStatus == EPersonaState.Offline)) {
 			return;
 		}
 
@@ -3550,7 +3579,7 @@ public sealed class Bot : IAsyncDisposable, IDisposable {
 					OnInventoryChanged();
 
 					break;
-				case UserNotificationsCallback.EUserNotification.Trading when newNotification:
+				case UserNotificationsCallback.EUserNotification.Trading when newNotification && !BotConfig.BotBehaviour.HasFlag(BotConfig.EBotBehaviour.DisableIncomingTradesParsing):
 					if ((TradeCheckTimer != null) && (BotConfig.TradeCheckPeriod > 0)) {
 						TradeCheckTimer.Change(TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod), TimeSpan.FromMinutes(BotConfig.TradeCheckPeriod));
 					}
